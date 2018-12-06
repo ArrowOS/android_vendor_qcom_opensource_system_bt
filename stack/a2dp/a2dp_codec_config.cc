@@ -371,7 +371,7 @@ bool A2dpCodecConfig::setCodecUserConfig(
 
 bool A2dpCodecConfig::codecConfigIsValid(
     const btav_a2dp_codec_config_t& codec_config) {
-  return 
+  return
 #if (TWS_ENABLED == TRUE)
         (codec_config.codec_type < BTAV_VENDOR_A2DP_CODEC_INDEX_MAX) &&
 #else
@@ -1231,6 +1231,7 @@ int A2DP_GetTrackBitsPerSample(const uint8_t* p_codec_info) {
         return 32;
       }
     }
+     break;
     default:
       break;
   }
