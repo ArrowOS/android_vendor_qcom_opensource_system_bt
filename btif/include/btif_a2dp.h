@@ -29,7 +29,7 @@
 #include "bta_av_api.h"
 
 // Process 'idle' request from the BTIF state machine during initialization.
-void btif_a2dp_on_idle(int index);
+void btif_a2dp_on_idle();
 
 // Process 'start' request from the BTIF state machine to prepare for A2DP
 // streaming.
@@ -67,5 +67,5 @@ void btif_debug_a2dp_dump(int fd);
 void btif_a2dp_sink_on_init(void);
 
 // Honor remote start
-void btif_a2dp_honor_remote_start(void);
+void btif_a2dp_honor_remote_start(struct alarm_t *remote_start_alarm, int index);
 #endif /* BTIF_A2DP_H */

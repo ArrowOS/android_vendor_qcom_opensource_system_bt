@@ -73,6 +73,7 @@
 #include <hwbinder/ProcessState.h>
 #include <a2dp_vendor_aptx_adaptive_constants.h>
 #include <a2dp_vendor_ldac_constants.h>
+#include <a2dp_vendor_aptx_hd_constants.h>
 #include <a2dp_vendor.h>
 #include "bta/av/bta_av_int.h"
 #include "btif_bat.h"
@@ -95,7 +96,7 @@ android::sp<IBluetoothAudio> btAudio;
     return #const;
 
 // ToDo: Dynamically fetch codec info size based on active codec
-uint8_t codec_info[34];
+uint8_t codec_info[64];
 uint8_t len,a2dp_cmd_pending = A2DP_CTRL_CMD_NONE;
 uint8_t a2dp_cmd_queued = A2DP_CTRL_CMD_NONE;
 uint8_t a2dp_local_cmd_pending = A2DP_CTRL_CMD_NONE;
@@ -114,9 +115,16 @@ std::condition_variable mCV;
 extern bool btif_av_is_device_disconnecting();
 extern int btif_get_is_remote_started_idx();
 extern bool btif_av_is_playing_on_other_idx(int current_index);
+extern bool btif_av_is_local_started_on_other_idx(int current_index);
+extern bool btif_av_is_remote_started_set(int index);
 extern int btif_get_is_remote_started_idx();
+extern bool btif_av_current_device_is_tws();
+extern bool btif_av_is_tws_device_playing(int index);
+extern bool btif_av_is_idx_tws_device(int index);
+extern int btif_av_get_tws_pair_idx(int index);
 extern bool reconfig_a2dp;
 extern bool audio_start_awaited;
+extern bool tws_defaultmono_supported;
 bool deinit_pending = false;
 static void btif_a2dp_audio_send_start_req();
 static void btif_a2dp_audio_send_suspend_req();
@@ -134,6 +142,8 @@ extern tBTA_AV_HNDL btif_av_get_av_hdl_from_idx(int idx);
 extern void btif_av_reset_reconfig_flag();
 extern tBTIF_A2DP_SOURCE_VSC btif_a2dp_src_vsc;
 extern bool btif_av_is_state_opened(int i);
+extern bool btif_av_is_tws_enable_monocfg();
+
 //extern void bta_av_vendor_offload_stop(void);
 
 #if 0
@@ -791,7 +801,7 @@ uint8_t btif_a2dp_audio_process_request(uint8_t cmd)
           }
         }
         memset(p_codec_info, 0, AVDT_CODEC_SIZE);
-        memset(codec_info, 0, 30);
+        memset(codec_info, 0, 34);
         if (!CodecConfig->copyOutOtaCodecConfig(p_codec_info))
         {
           LOG_INFO(LOG_TAG,"No valid codec config");
@@ -923,11 +933,15 @@ uint8_t btif_a2dp_audio_process_request(uint8_t cmd)
         break;
 
       case A2DP_CTRL_CMD_START:
+      {
         /*
          * Don't send START request to stack while we are in a call.
          * Some headsets such as "Sony MW600", don't allow AVDTP START
          * while in a call, and respond with BAD_STATE.
          */
+        bool reset_remote_start = false;
+        int remote_start_idx = btif_max_av_clients;
+        int latest_playing_idx = btif_max_av_clients;
         if (!bluetooth::headset::btif_hf_is_call_vr_idle()) {
           status = A2DP_CTRL_ACK_INCALL_FAILURE;
           break;
@@ -943,20 +957,30 @@ uint8_t btif_a2dp_audio_process_request(uint8_t cmd)
           status = A2DP_CTRL_ACK_PENDING;
           break;
         }
+        remote_start_idx = btif_get_is_remote_started_idx();
+        latest_playing_idx = btif_av_get_latest_device_idx_to_start();
         if (btif_a2dp_source_is_remote_start()) {
-          int remote_start_idx = btif_get_is_remote_started_idx();
-          int latest_playing_idx = btif_av_get_latest_device_idx_to_start();
+          reset_remote_start = false;
           APPL_TRACE_DEBUG("%s: remote started idx = %d latest playing = %d",__func__,
                            remote_start_idx, latest_playing_idx);
+#if (TWS_ENABLED == TRUE)
+          if (btif_av_current_device_is_tws() &&
+            btif_av_is_idx_tws_device(remote_start_idx)) {
+            APPL_TRACE_DEBUG("%s:Remote started by TWS+ device, force cancel",__func__);
+            reset_remote_start = true;
+          }
+          if (!reset_remote_start && (remote_start_idx < btif_max_av_clients) &&
+#else
           if ((remote_start_idx < btif_max_av_clients) &&
+#endif
             ((latest_playing_idx < btif_max_av_clients && latest_playing_idx != remote_start_idx) ||
-             btif_av_is_playing_on_other_idx(remote_start_idx))) {
+             btif_av_is_local_started_on_other_idx(remote_start_idx))) {
             APPL_TRACE_WARNING("%s: Already playing on other index, don't cancel remote start timer",__func__);
             status = A2DP_CTRL_ACK_PENDING;
           } else {
             APPL_TRACE_WARNING("%s: remote a2dp started, cancel remote start timer", __func__);
             btif_a2dp_source_cancel_remote_start();
-            btif_dispatch_sm_event(BTIF_AV_RESET_REMOTE_STARTED_FLAG_UPDATE_AUDIO_STATE_EVT, NULL, 0);
+            btif_dispatch_sm_event(BTIF_AV_RESET_REMOTE_STARTED_FLAG_UPDATE_AUDIO_STATE_EVT, &remote_start_idx, sizeof(remote_start_idx));
             status = A2DP_CTRL_ACK_PENDING;
           }
         }
@@ -967,8 +991,7 @@ uint8_t btif_a2dp_audio_process_request(uint8_t cmd)
             audio_start_awaited = false;
             btif_dispatch_sm_event(BTIF_AV_START_STREAM_REQ_EVT, NULL, 0);
             status = A2DP_CTRL_ACK_PENDING;
-            int idx = btif_av_get_latest_device_idx_to_start();
-            if (btif_av_get_peer_sep(idx) == AVDT_TSEP_SRC)
+            if (btif_av_get_peer_sep() == AVDT_TSEP_SRC)
               status = A2DP_CTRL_ACK_SUCCESS;
             break;
           }
@@ -986,24 +1009,53 @@ uint8_t btif_a2dp_audio_process_request(uint8_t cmd)
             status = A2DP_CTRL_ACK_PENDING;
             break;
           } else if (btif_a2dp_src_vsc.tx_started == FALSE) {
-            int idx = btif_av_get_latest_playing_device_idx();
             uint8_t hdl = 0;
-            APPL_TRACE_DEBUG("%s: latest playing idx = %d",__func__, idx);
-            if (idx < btif_max_av_clients) {
-              hdl = btif_av_get_av_hdl_from_idx(idx);
+            bool remote_start_flag = false;
+            APPL_TRACE_DEBUG("%s: latest playing idx = %d",__func__, latest_playing_idx);
+            if (latest_playing_idx > btif_max_av_clients || latest_playing_idx < 0) {
+                APPL_TRACE_ERROR("%s: Invalid index",__func__);
+                status = -1;//Invalid status to stop start retry
+                break;
+            }
+            remote_start_flag = btif_av_is_remote_started_set(latest_playing_idx);
+            if (remote_start_flag) {
+              hdl = btif_av_get_av_hdl_from_idx(latest_playing_idx);
               APPL_TRACE_DEBUG("%s: hdl = %d, enc_update_in_progress = %d",__func__, hdl,
                       enc_update_in_progress);
               if (hdl >= 0) {
                 btif_a2dp_source_setup_codec(hdl);
                 enc_update_in_progress = TRUE;
               }
-            } else {
-                APPL_TRACE_ERROR("%s: Invalid index",__func__);
-                status = -1;//Invalid status to stop start retry
-                break;
+              APPL_TRACE_DEBUG("Start VSC exchange on MM Start when state is remote started on hdl = %d",hdl);
+              btif_dispatch_sm_event(BTIF_AV_OFFLOAD_START_REQ_EVT, (char *)&hdl, 1);
+              status = A2DP_CTRL_ACK_PENDING;
+            } else if (btif_av_is_state_opened(latest_playing_idx)) {
+              btif_dispatch_sm_event(BTIF_AV_START_STREAM_REQ_EVT, NULL, 0);
+              if (btif_av_get_peer_sep() == AVDT_TSEP_SRC) {
+                status = A2DP_CTRL_ACK_SUCCESS;
+              } else {
+                /*Return pending and ack when start stream cfm received from remote*/
+                status = A2DP_CTRL_ACK_PENDING;
+              }
             }
-            APPL_TRACE_DEBUG("Start VSC exchange on MM Start when state is remote started on hdl = %d",hdl);
+#if (TWS_ENABLED == TRUE)
+            if (btif_av_current_device_is_tws() &&
+              reset_remote_start && !btif_av_is_tws_device_playing(latest_playing_idx)) {
+              int pair_idx = btif_av_get_tws_pair_idx(latest_playing_idx);
+              if (pair_idx < btif_max_av_clients && btif_av_is_state_opened(pair_idx)) {
+                APPL_TRACE_DEBUG("%s:Other TWS+ is not start at idx %d, sending start_req",__func__,pair_idx);
+                btif_dispatch_sm_event(BTIF_AV_START_STREAM_REQ_EVT, NULL, 0);
+              }
+              status = A2DP_CTRL_ACK_PENDING;
+            }
+            break;
+          } else if (remote_start_idx < btif_max_av_clients &&
+            reset_remote_start && btif_av_current_device_is_tws()) {
+            uint8_t hdl = 0;
+            hdl = btif_av_get_av_hdl_from_idx(remote_start_idx);
+            APPL_TRACE_DEBUG("Start VSC exchange for remote started index of TWS+ device");
             btif_dispatch_sm_event(BTIF_AV_OFFLOAD_START_REQ_EVT, (char *)&hdl, 1);
+#endif
             status = A2DP_CTRL_ACK_PENDING;
             break;
           }
@@ -1017,11 +1069,10 @@ uint8_t btif_a2dp_audio_process_request(uint8_t cmd)
            * If we are the source, the ACK will be sent after the start
            * procedure is completed, othewise send it now.
            */
-          int idx = btif_av_get_latest_device_idx_to_start();
-          if (idx < btif_max_av_clients &&
-              btif_av_is_state_opened(idx)) {
+          if (latest_playing_idx < btif_max_av_clients &&
+              btif_av_is_state_opened(latest_playing_idx)) {
             btif_dispatch_sm_event(BTIF_AV_START_STREAM_REQ_EVT, NULL, 0);
-            if (btif_av_get_peer_sep(idx) == AVDT_TSEP_SRC) {
+            if (btif_av_get_peer_sep() == AVDT_TSEP_SRC) {
               status = A2DP_CTRL_ACK_SUCCESS;
               break;
             }
@@ -1035,6 +1086,7 @@ uint8_t btif_a2dp_audio_process_request(uint8_t cmd)
                 __func__, audio_a2dp_hw_dump_ctrl_event((tA2DP_CTRL_CMD)cmd));
         return A2DP_CTRL_ACK_FAILURE;
         break;
+      }
 
       case A2DP_CTRL_CMD_STOP: {
         if (isBAEnabled())
@@ -1043,15 +1095,14 @@ uint8_t btif_a2dp_audio_process_request(uint8_t cmd)
           status = A2DP_CTRL_ACK_PENDING;
           break;
         }
-        int idx = btif_av_get_latest_playing_device_idx();
         if (deinit_pending) {
           APPL_TRACE_WARNING("%s:deinit pending return disconnected",__func__);
           status = A2DP_CTRL_ACK_DISCONNECT_IN_PROGRESS;
           break;
         }
-        if ((!btif_av_is_split_a2dp_enabled() && btif_av_get_peer_sep(idx) == AVDT_TSEP_SNK &&
+        if ((!btif_av_is_split_a2dp_enabled() && btif_av_get_peer_sep() == AVDT_TSEP_SNK &&
             !btif_a2dp_source_is_streaming()) ||
-            (btif_av_is_split_a2dp_enabled() && btif_av_get_peer_sep(idx) == AVDT_TSEP_SNK &&
+            (btif_av_is_split_a2dp_enabled() && btif_av_get_peer_sep() == AVDT_TSEP_SNK &&
             btif_a2dp_src_vsc.tx_started == FALSE)) {
           /* We are already stopped, just ack back */
           status = A2DP_CTRL_ACK_SUCCESS;
@@ -1076,7 +1127,9 @@ uint8_t btif_a2dp_audio_process_request(uint8_t cmd)
           break;
         }
         if (reconfig_a2dp ||
-                btif_a2dp_source_is_remote_start()) {
+               ((btif_a2dp_source_last_remote_start_index() ==
+               btif_av_get_latest_device_idx_to_start()) &&
+           (btif_av_is_remote_started_set(btif_a2dp_source_last_remote_start_index())))) {
           LOG_INFO(LOG_TAG,"Suspend called due to reconfig");
           status = A2DP_CTRL_ACK_SUCCESS;
           break;
@@ -1086,7 +1139,22 @@ uint8_t btif_a2dp_audio_process_request(uint8_t cmd)
           btif_dispatch_sm_event(BTIF_AV_SUSPEND_STREAM_REQ_EVT, NULL, 0);
           status = A2DP_CTRL_ACK_PENDING;
           break;
-        }/*pls check if we need to add a condition here */
+        }else if (btif_av_current_device_is_tws()) {
+          //Check if either of the index is streaming
+          for (int i = 0; i < btif_max_av_clients; i++) {
+            if (btif_av_is_tws_device_playing(i)) {
+              APPL_TRACE_DEBUG("Suspend TWS+ stream on index %d",i);
+              btif_dispatch_sm_event(BTIF_AV_SUSPEND_STREAM_REQ_EVT, NULL, 0);
+              status = A2DP_CTRL_ACK_PENDING;
+              break;
+            }
+          }
+          if (status == A2DP_CTRL_ACK_PENDING) {
+            btif_av_clear_remote_suspend_flag();
+            break;
+          }
+        }
+        /*pls check if we need to add a condition here */
         /* If we are not in started state, just ack back ok and let
          * audioflinger close the channel. This can happen if we are
          * remotely suspended, clear REMOTE SUSPEND flag.
@@ -1121,7 +1189,7 @@ uint8_t btif_a2dp_audio_process_request(uint8_t cmd)
         len = 0;
         LOG_INFO(LOG_TAG,"A2DP_CTRL_GET_CODEC_CONFIG");
         memset(p_codec_info, 0, AVDT_CODEC_SIZE);
-        memset(codec_info, 0, 30);
+        memset(codec_info, 0, 34);
         if (isBAEnabled())
         {
             getBACodecConfig(p_codec_info);
@@ -1200,6 +1268,14 @@ uint8_t btif_a2dp_audio_process_request(uint8_t cmd)
         codec_info[len++] = (uint8_t)(((bitrate & 0xFF000000) >> 24) & 0x00FF);
         *(uint32_t *)&codec_info[len] = (uint32_t)bits_per_sample;
         len = len+4;
+        if (strcmp(A2DP_CodecName(p_codec_info), "aptX-TWS") == 0)
+        {
+           if (tws_defaultmono_supported && btif_av_is_tws_enable_monocfg()) {
+               LOG_INFO(LOG_TAG,"tws mono mode config set to 1" );
+               codec_info[len++] = 1;
+           } else
+             codec_info[len++] = 0;
+        }
         if(codec_vendor_id == A2DP_APTX_ADAPTIVE_VENDOR_ID)
         {
           *(uint16_t *)&codec_info[len] = (uint16_t)aptx_mode;
@@ -1262,6 +1338,7 @@ uint8_t btif_a2dp_audio_snd_ctrl_cmd(uint8_t cmd)
 
   switch (cmd) {
     case A2DP_CTRL_CMD_START:
+    {
       /*
        * Don't send START request to stack while we are in a call.
        * Some headsets such as "Sony MW600", don't allow AVDTP START
@@ -1284,20 +1361,20 @@ uint8_t btif_a2dp_audio_snd_ctrl_cmd(uint8_t cmd)
           break;
       }
 
+      int remote_start_idx = btif_get_is_remote_started_idx();
+      int latest_playing_idx = btif_av_get_latest_device_idx_to_start();
       if (btif_a2dp_source_is_remote_start()) {
-        int remote_start_idx = btif_get_is_remote_started_idx();
-        int latest_playing_idx = btif_av_get_latest_device_idx_to_start();
         APPL_TRACE_DEBUG("%s: remote started idx = %d, latest playing  idx = %d",__func__,
                          remote_start_idx, latest_playing_idx);
         if ((remote_start_idx < btif_max_av_clients) &&
          ((latest_playing_idx < btif_max_av_clients && latest_playing_idx != remote_start_idx) ||
-         (btif_av_is_playing_on_other_idx(remote_start_idx)))) {
+         (btif_av_is_local_started_on_other_idx(remote_start_idx)))) {
           APPL_TRACE_WARNING("%s: Already playing on other index, don't cancel remote start timer",__func__);
           status = A2DP_CTRL_ACK_PENDING;
         } else {
           APPL_TRACE_WARNING("%s: remote a2dp started, cancel remote start timer", __func__);
           btif_a2dp_source_cancel_remote_start();
-          btif_dispatch_sm_event(BTIF_AV_RESET_REMOTE_STARTED_FLAG_UPDATE_AUDIO_STATE_EVT, NULL, 0);
+          btif_dispatch_sm_event(BTIF_AV_RESET_REMOTE_STARTED_FLAG_UPDATE_AUDIO_STATE_EVT, &remote_start_idx, sizeof(remote_start_idx));
           status = A2DP_CTRL_ACK_PENDING;
         }
       }
@@ -1308,8 +1385,7 @@ uint8_t btif_a2dp_audio_snd_ctrl_cmd(uint8_t cmd)
           audio_start_awaited = false;
           btif_dispatch_sm_event(BTIF_AV_START_STREAM_REQ_EVT, NULL, 0);
           status = A2DP_CTRL_ACK_PENDING;
-          int idx = btif_av_get_latest_device_idx_to_start();
-          if (btif_av_get_peer_sep(idx) == AVDT_TSEP_SRC)
+          if (btif_av_get_peer_sep() == AVDT_TSEP_SRC)
             status = A2DP_CTRL_ACK_SUCCESS;
           break;
         }
@@ -1327,25 +1403,39 @@ uint8_t btif_a2dp_audio_snd_ctrl_cmd(uint8_t cmd)
           status = A2DP_CTRL_ACK_PENDING;
           break;
         } else if (btif_a2dp_src_vsc.tx_started == FALSE) {
-          int idx = btif_get_is_remote_started_idx();
           uint8_t hdl = 0;
-          APPL_TRACE_DEBUG("%s: remote started idx = %d",__func__, idx);
-          if (idx < btif_max_av_clients) {
-            hdl = btif_av_get_av_hdl_from_idx(idx);
+          bool remote_start_flag = false;
+          APPL_TRACE_DEBUG("%s: remote started idx = %d",__func__, latest_playing_idx);
+          if (latest_playing_idx > btif_max_av_clients || latest_playing_idx < 0) {
+            APPL_TRACE_ERROR("%s: Invalid index",__func__);
+            status = -1;//Invalid status to stop start retry
+            break;
+          }
+          remote_start_flag = btif_av_is_remote_started_set(latest_playing_idx);
+          if(remote_start_flag) {
+            hdl = btif_av_get_av_hdl_from_idx(latest_playing_idx);
             APPL_TRACE_DEBUG("%s: hdl = %d, enc_update_in_progress = %d",__func__, hdl,
                               enc_update_in_progress);
             if (hdl >= 0) {
               btif_a2dp_source_setup_codec(hdl);
               enc_update_in_progress = TRUE;
             }
+            APPL_TRACE_DEBUG("Start VSC exchange on MM Start when state is remote started on hdl = %d",hdl);
+            btif_dispatch_sm_event(BTIF_AV_OFFLOAD_START_REQ_EVT, (char *)&hdl, 1);
+            status = A2DP_CTRL_ACK_PENDING;
+          } else if (btif_av_is_state_opened(latest_playing_idx)) {
+            btif_dispatch_sm_event(BTIF_AV_START_STREAM_REQ_EVT, NULL, 0);
+            if (btif_av_get_peer_sep() == AVDT_TSEP_SRC) {
+              status = A2DP_CTRL_ACK_SUCCESS;
+            } else {
+              /*Return pending and ack when start stream cfm received from remote*/
+              status = A2DP_CTRL_ACK_PENDING;
+            }
           } else {
-            APPL_TRACE_ERROR("%s: Invalid index",__func__);
+            APPL_TRACE_ERROR("%s: Ignoring offload and start stream",__func__);
             status = -1;//Invalid status to stop start retry
             break;
           }
-          APPL_TRACE_DEBUG("Start VSC exchange on MM Start when state is remote started on hdl = %d",hdl);
-          btif_dispatch_sm_event(BTIF_AV_OFFLOAD_START_REQ_EVT, (char *)&hdl, 1);
-          status = A2DP_CTRL_ACK_PENDING;
           break;
         }
         btif_av_reset_reconfig_flag();
@@ -1362,7 +1452,7 @@ uint8_t btif_a2dp_audio_snd_ctrl_cmd(uint8_t cmd)
         if (idx < btif_max_av_clients &&
                 btif_av_is_state_opened(idx)) {
           btif_dispatch_sm_event(BTIF_AV_START_STREAM_REQ_EVT, NULL, 0);
-          if (btif_av_get_peer_sep(idx) == AVDT_TSEP_SRC) {
+          if (btif_av_get_peer_sep() == AVDT_TSEP_SRC) {
             status = A2DP_CTRL_ACK_SUCCESS;
             break;
           }
@@ -1376,6 +1466,7 @@ uint8_t btif_a2dp_audio_snd_ctrl_cmd(uint8_t cmd)
                          __func__, audio_a2dp_hw_dump_ctrl_event((tA2DP_CTRL_CMD)cmd));
       return A2DP_CTRL_ACK_FAILURE;
       break;
+    }
 
     case A2DP_CTRL_CMD_STOP:
       {
@@ -1385,15 +1476,14 @@ uint8_t btif_a2dp_audio_snd_ctrl_cmd(uint8_t cmd)
             status = A2DP_CTRL_ACK_PENDING;
             break;
         }
-        int idx = btif_av_get_latest_playing_device_idx();
         if (deinit_pending) {
           APPL_TRACE_WARNING("%s:deinit pending return disconnected",__func__);
           status = A2DP_CTRL_ACK_DISCONNECT_IN_PROGRESS;
           break;
         }
-        if ((!btif_av_is_split_a2dp_enabled() && btif_av_get_peer_sep(idx) == AVDT_TSEP_SNK &&
+        if ((!btif_av_is_split_a2dp_enabled() && btif_av_get_peer_sep() == AVDT_TSEP_SNK &&
             !btif_a2dp_source_is_streaming()) ||
-            (btif_av_is_split_a2dp_enabled() && btif_av_get_peer_sep(idx) == AVDT_TSEP_SNK &&
+            (btif_av_is_split_a2dp_enabled() && btif_av_get_peer_sep() == AVDT_TSEP_SNK &&
             btif_a2dp_src_vsc.tx_started == FALSE)) {
           /* We are already stopped, just ack back */
           status = A2DP_CTRL_ACK_SUCCESS;
@@ -1421,7 +1511,9 @@ uint8_t btif_a2dp_audio_snd_ctrl_cmd(uint8_t cmd)
       }
 
       if (reconfig_a2dp ||
-          btif_a2dp_source_is_remote_start()) {
+          ((btif_a2dp_source_last_remote_start_index() ==
+          btif_av_get_latest_device_idx_to_start()) &&
+          (btif_av_is_remote_started_set(btif_a2dp_source_last_remote_start_index())))) {
         LOG_INFO(LOG_TAG,"Suspend called due to reconfig");
         status = A2DP_CTRL_ACK_SUCCESS;
         break;

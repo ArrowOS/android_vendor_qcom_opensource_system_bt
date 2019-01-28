@@ -75,8 +75,8 @@ typedef struct {
   uint8_t eoc0;
   uint8_t eoc1;
   uint8_t eoc2;
-
   btav_a2dp_codec_bits_per_sample_t bits_per_sample;
+  uint8_t reserved_data[A2DP_APTX_ADAPTIVE_RESERVED_DATA];
 } tA2DP_APTX_ADAPTIVE_CIE;
 
 /* aptX-adaptive Source codec capabilities */
@@ -97,8 +97,8 @@ static const tA2DP_APTX_ADAPTIVE_CIE a2dp_aptx_adaptive_src_caps = {
     A2DP_APTX_ADAPTIVE_EOC1,
     A2DP_APTX_ADAPTIVE_EOC2,
 
-   BTAV_A2DP_CODEC_BITS_PER_SAMPLE_24 /* bits_per_sample */
-   //BTAV_A2DP_CODEC_BITS_PER_SAMPLE_16 /* bits_per_sample */
+   BTAV_A2DP_CODEC_BITS_PER_SAMPLE_24, /* bits_per_sample */
+   {0}
 };
 
 /* Default aptX-adaptive codec configuration */
@@ -118,8 +118,8 @@ static const tA2DP_APTX_ADAPTIVE_CIE a2dp_aptx_adaptive_offload_caps = {
     A2DP_APTX_ADAPTIVE_EOC1,
     A2DP_APTX_ADAPTIVE_EOC2,
 
-    BTAV_A2DP_CODEC_BITS_PER_SAMPLE_24 /* bits_per_sample */
-    //BTAV_A2DP_CODEC_BITS_PER_SAMPLE_16 /* bits_per_sample */
+    BTAV_A2DP_CODEC_BITS_PER_SAMPLE_24, /* bits_per_sample */
+    {0}
 };
 /* Default aptX-adaptive codec configuration */
 static const tA2DP_APTX_ADAPTIVE_CIE a2dp_aptx_adaptive_default_src_config = {
@@ -139,8 +139,8 @@ static const tA2DP_APTX_ADAPTIVE_CIE a2dp_aptx_adaptive_default_src_config = {
     A2DP_APTX_ADAPTIVE_EOC1,
     A2DP_APTX_ADAPTIVE_EOC2,
 
-    BTAV_A2DP_CODEC_BITS_PER_SAMPLE_24 /* bits_per_sample */
-    //BTAV_A2DP_CODEC_BITS_PER_SAMPLE_16 /* bits_per_sample */
+    BTAV_A2DP_CODEC_BITS_PER_SAMPLE_24, /* bits_per_sample */
+    {0}
 };
 /* Default aptX-adaptive offload codec configuration */
 static const tA2DP_APTX_ADAPTIVE_CIE a2dp_aptx_adaptive_default_offload_config = {
@@ -160,8 +160,8 @@ static const tA2DP_APTX_ADAPTIVE_CIE a2dp_aptx_adaptive_default_offload_config =
     A2DP_APTX_ADAPTIVE_EOC1,
     A2DP_APTX_ADAPTIVE_EOC2,
 
-    BTAV_A2DP_CODEC_BITS_PER_SAMPLE_24 /* bits_per_sample */
-    //BTAV_A2DP_CODEC_BITS_PER_SAMPLE_16 /* bits_per_sample */
+    BTAV_A2DP_CODEC_BITS_PER_SAMPLE_24, /* bits_per_sample */
+    {0}
 };
 tA2DP_APTX_ADAPTIVE_CIE a2dp_aptx_adaptive_caps, a2dp_aptx_adaptive_default_config;
 
@@ -192,7 +192,6 @@ static tA2DP_STATUS A2DP_BuildInfoAptxAdaptive(uint8_t media_type,
     return A2DP_INVALID_PARAMS;
   }
 
-  //*p_result++ = A2DP_APTX_ADAPTIVE_CODEC_LEN_1;
   *p_result++ = A2DP_APTX_ADAPTIVE_CODEC_LEN;
   *p_result++ = (media_type << 4);
   *p_result++ = A2DP_MEDIA_CT_NON_A2DP;
@@ -213,6 +212,8 @@ static tA2DP_STATUS A2DP_BuildInfoAptxAdaptive(uint8_t media_type,
   *p_result++ = p_ie->eoc0;
   *p_result++ = p_ie->eoc1;
   *p_result++ = p_ie->eoc2;
+  memset(p_result, 0x0, sizeof(p_ie->reserved_data));
+  p_result += sizeof(p_ie->reserved_data);
   //*p_result++ = p_ie->ttp_tws_0;
   //*p_result++ = p_ie->ttp_tws_1;
 
@@ -552,6 +553,15 @@ btav_a2dp_codec_index_t A2DP_VendorSourceCodecIndexAptxAdaptive(
 const char* A2DP_VendorCodecIndexStrAptxAdaptive(void) { return "aptX-adaptive"; }
 
 bool A2DP_VendorInitCodecConfigAptxAdaptive(tAVDT_CFG* p_cfg) {
+  if (A2DP_GetOffloadStatus()) {
+    if (!A2DP_IsCodecEnabledInOffload(BTAV_A2DP_CODEC_INDEX_SOURCE_APTX_ADAPTIVE)) {
+      LOG_ERROR(LOG_TAG, "%s: APTX-ADAPTIVE disabled in offload mode", __func__);
+      return false;
+    }
+  } else {
+    LOG_ERROR(LOG_TAG, "%s: APTX-ADAPTIVE is not supported in Non-Split mode", __func__);
+    return false;
+  }
   if (A2DP_BuildInfoAptxAdaptive(AVDT_MEDIA_TYPE_AUDIO, &a2dp_aptx_adaptive_caps,
                            p_cfg->codec_info) != A2DP_SUCCESS) {
     return false;
@@ -619,7 +629,11 @@ bool A2dpCodecConfigAptxAdaptive::init() {
       LOG_ERROR(LOG_TAG, "%s: APTX-Adaptive disabled in offload mode", __func__);
       return false;
     }
+  } else {
+    LOG_ERROR(LOG_TAG, "%s: APTX-ADAPTIVE is not supported in Non-Split mode", __func__);
+    return false;
   }
+
   // Load the encoder
   if (!A2DP_VendorLoadEncoderAptxAdaptive()) {
     LOG_ERROR(LOG_TAG, "%s: cannot load the encoder", __func__);
@@ -936,8 +950,8 @@ bool A2dpCodecConfigAptxAdaptive::setCodecConfig(const uint8_t* p_peer_codec_inf
   codec_config_.bits_per_sample = BTAV_A2DP_CODEC_BITS_PER_SAMPLE_NONE;
   switch (codec_user_config_.bits_per_sample) {
     case BTAV_A2DP_CODEC_BITS_PER_SAMPLE_16:
-      codec_capability_.bits_per_sample = codec_user_config_.bits_per_sample;
-      codec_config_.bits_per_sample = codec_user_config_.bits_per_sample;
+      codec_capability_.bits_per_sample = BTAV_A2DP_CODEC_BITS_PER_SAMPLE_NONE;
+      codec_config_.bits_per_sample = BTAV_A2DP_CODEC_BITS_PER_SAMPLE_NONE;
       break;
 
     case BTAV_A2DP_CODEC_BITS_PER_SAMPLE_24:
@@ -1108,7 +1122,7 @@ bool A2dpCodecConfigAptxAdaptive::setCodecConfig(const uint8_t* p_peer_codec_inf
   result_config_cie.eoc0 = a2dp_aptx_adaptive_caps.eoc0;
   result_config_cie.eoc1 = a2dp_aptx_adaptive_caps.eoc1;
   result_config_cie.eoc2 = a2dp_aptx_adaptive_caps.eoc2;
-
+  memset(result_config_cie.reserved_data, 0, sizeof(result_config_cie.reserved_data));
   if (A2DP_BuildInfoAptxAdaptive(AVDT_MEDIA_TYPE_AUDIO, &result_config_cie,
                            p_result_codec_config) != A2DP_SUCCESS) {
     goto fail;

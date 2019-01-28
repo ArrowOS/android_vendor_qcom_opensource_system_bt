@@ -45,11 +45,11 @@ extern tBTIF_A2DP_SOURCE_VSC btif_a2dp_src_vsc;
 extern void btif_av_reset_reconfig_flag();
 static char a2dp_hal_imp[PROPERTY_VALUE_MAX] = "false";
 
-void btif_a2dp_on_idle(int index) {
-  APPL_TRACE_EVENT("## ON A2DP IDLE ## peer_sep = %d", btif_av_get_peer_sep(index));
-  if (btif_av_get_peer_sep(index) == AVDT_TSEP_SNK) {
+void btif_a2dp_on_idle() {
+  APPL_TRACE_EVENT("## ON A2DP IDLE ## peer_sep = %d", btif_av_get_peer_sep());
+  if (btif_av_get_peer_sep() == AVDT_TSEP_SNK) {
     btif_a2dp_source_on_idle();
-  } else if (btif_av_get_peer_sep(index) == AVDT_TSEP_SRC) {
+  } else if (btif_av_get_peer_sep() == AVDT_TSEP_SRC) {
     btif_a2dp_sink_on_idle();
   }
 }
@@ -112,7 +112,7 @@ bool btif_a2dp_on_started(tBTA_AV_START* p_av_start, bool pending_start,
   } else if (pending_start) {
     APPL_TRACE_WARNING("%s: A2DP start request failed: status = %d", __func__,
                        p_av_start->status);
-    if (property_get("persist.bt.a2dp.hal.implementation", a2dp_hal_imp, "false") &&
+    if (property_get("persist.vendor.bt.a2dp.hal.implementation", a2dp_hal_imp, "false") &&
         !strcmp(a2dp_hal_imp, "true")) {
       int index = (hdl & BTA_AV_HNDL_MSK) - 1;
       RawAddress addr = btif_av_get_addr_by_index(index);
@@ -144,8 +144,7 @@ bool btif_a2dp_on_started(tBTA_AV_START* p_av_start, bool pending_start,
 void btif_a2dp_on_stopped(tBTA_AV_SUSPEND* p_av_suspend) {
   APPL_TRACE_WARNING("## ON A2DP STOPPED ##");
 
-  int idx = btif_av_get_latest_playing_device_idx();
-  if (btif_av_get_peer_sep(idx) == AVDT_TSEP_SRC) {
+  if (btif_av_get_peer_sep() == AVDT_TSEP_SRC) {
     btif_a2dp_sink_on_stopped(p_av_suspend);
     return;
   }
@@ -155,7 +154,7 @@ void btif_a2dp_on_stopped(tBTA_AV_SUSPEND* p_av_suspend) {
     if (btif_a2dp_audio_if_init) {
       if (p_av_suspend != NULL) {
         btif_a2dp_audio_on_stopped(p_av_suspend->status);
-        if (property_get("persist.bt.a2dp.hal.implementation", a2dp_hal_imp, "false") &&
+        if (property_get("persist.vendor.bt.a2dp.hal.implementation", a2dp_hal_imp, "false") &&
             !strcmp(a2dp_hal_imp, "true") && (p_av_suspend->status != BTA_AV_SUCCESS)) {
           int index = ((p_av_suspend->hndl) & BTA_AV_HNDL_MSK) - 1;
           RawAddress addr = btif_av_get_addr_by_index(index);
@@ -175,9 +174,8 @@ void btif_a2dp_on_stopped(tBTA_AV_SUSPEND* p_av_suspend) {
 
 void btif_a2dp_on_suspended(tBTA_AV_SUSPEND* p_av_suspend) {
   APPL_TRACE_EVENT("## ON A2DP SUSPENDED ##");
-  int idx = btif_av_get_latest_playing_device_idx();
   if (!btif_av_is_split_a2dp_enabled()) {
-    if (btif_av_get_peer_sep(idx) == AVDT_TSEP_SRC) {
+    if (btif_av_get_peer_sep() == AVDT_TSEP_SRC) {
       btif_a2dp_sink_on_suspended(p_av_suspend);
     } else {
       btif_a2dp_source_on_suspended(p_av_suspend);
@@ -185,7 +183,7 @@ void btif_a2dp_on_suspended(tBTA_AV_SUSPEND* p_av_suspend) {
   } else {
     if (p_av_suspend != NULL) {
       btif_a2dp_audio_on_suspended(p_av_suspend->status);
-      if (property_get("persist.bt.a2dp.hal.implementation", a2dp_hal_imp, "false") &&
+      if (property_get("persist.vendor.bt.a2dp.hal.implementation", a2dp_hal_imp, "false") &&
           !strcmp(a2dp_hal_imp, "true") && (p_av_suspend->status != BTA_AV_SUCCESS)) {
         int index = ((p_av_suspend->hndl) & BTA_AV_HNDL_MSK) - 1;
         RawAddress addr = btif_av_get_addr_by_index(index);
@@ -250,9 +248,9 @@ void btif_a2dp_on_offload_started(tBTA_AV_STATUS status) {
   }
 }
 
-void btif_a2dp_honor_remote_start() {
+void btif_a2dp_honor_remote_start(struct alarm_t *remote_start_alarm, int index) {
   APPL_TRACE_WARNING("%s",__func__);
-  btif_a2dp_source_on_remote_start();
+  btif_a2dp_source_on_remote_start(remote_start_alarm, index);
 }
 
 void btif_debug_a2dp_dump(int fd) {

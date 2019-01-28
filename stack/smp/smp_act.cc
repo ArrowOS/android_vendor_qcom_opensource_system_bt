@@ -16,6 +16,7 @@
  *
  ******************************************************************************/
 
+#include <log/log.h>
 #include <string.h>
 #include "btif_common.h"
 #include "device/include/interop.h"
@@ -390,15 +391,15 @@ void smp_send_id_info(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
  * Description  send CSRK command.
  ******************************************************************************/
 void smp_send_csrk_info(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
-  tBTM_LE_LCSRK_KEYS key;
+  tBTM_LE_KEY_VALUE key;
   SMP_TRACE_DEBUG("%s", __func__);
   smp_update_key_mask(p_cb, SMP_SEC_KEY_TYPE_CSRK, false);
 
   if (smp_send_cmd(SMP_OPCODE_SIGN_INFO, p_cb)) {
-    key.div = p_cb->div;
-    key.sec_level = p_cb->sec_level;
-    key.counter = 0; /* initialize the local counter */
-    memcpy(key.csrk, p_cb->csrk, BT_OCTET16_LEN);
+    key.lcsrk_key.div = p_cb->div;
+    key.lcsrk_key.sec_level = p_cb->sec_level;
+    key.lcsrk_key.counter = 0; /* initialize the local counter */
+    memcpy(key.lcsrk_key.csrk, p_cb->csrk, BT_OCTET16_LEN);
     btm_sec_save_le_key(p_cb->pairing_bda, BTM_LE_KEY_LCSRK,
                         (tBTM_LE_KEY_VALUE*)&key, true);
   }
@@ -732,12 +733,16 @@ void smp_process_keypress_notification(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   uint8_t reason = SMP_INVALID_PARAMETERS;
 
   SMP_TRACE_DEBUG("%s", __func__);
-  p_cb->status = *(uint8_t*)p_data;
 
   if (smp_command_has_invalid_parameters(p_cb)) {
+    if (p_cb->rcvd_cmd_len < 2) {  // 1 (opcode) + 1 (Notif Type) bytes
+      android_errorWriteLog(0x534e4554, "111936834");
+    }
     smp_sm_event(p_cb, SMP_AUTH_CMPL_EVT, &reason);
     return;
   }
+
+  p_cb->status = *(uint8_t*)p_data;
 
   if (p != NULL) {
     STREAM_TO_UINT8(p_cb->peer_keypress_notification, p);
@@ -901,6 +906,14 @@ void smp_proc_enc_info(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   uint8_t* p = (uint8_t*)p_data;
 
   SMP_TRACE_DEBUG("%s", __func__);
+
+  if (smp_command_has_invalid_parameters(p_cb)) {
+    uint8_t reason = SMP_INVALID_PARAMETERS;
+    android_errorWriteLog(0x534e4554, "111937065");
+    smp_sm_event(p_cb, SMP_AUTH_CMPL_EVT, &reason);
+    return;
+  }
+
   STREAM_TO_ARRAY(p_cb->ltk, p, BT_OCTET16_LEN);
 
   smp_key_distribution(p_cb, NULL);
@@ -914,6 +927,14 @@ void smp_proc_master_id(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   tBTM_LE_PENC_KEYS le_key;
 
   SMP_TRACE_DEBUG("%s", __func__);
+
+  if (p_cb->rcvd_cmd_len < 11) {  // 1(Code) + 2(EDIV) + 8(Rand)
+    android_errorWriteLog(0x534e4554, "111937027");
+    SMP_TRACE_ERROR("%s: Invalid command length: %d, should be at least 11",
+                    __func__, p_cb->rcvd_cmd_len);
+    return;
+  }
+
   smp_update_key_mask(p_cb, SMP_SEC_KEY_TYPE_ENC, true);
 
   STREAM_TO_UINT16(le_key.ediv, p);
@@ -933,13 +954,21 @@ void smp_proc_master_id(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
 }
 
 /*******************************************************************************
- * Function     smp_proc_enc_info
+ * Function     smp_proc_id_info
  * Description  process identity information from peer device
  ******************************************************************************/
 void smp_proc_id_info(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   uint8_t* p = (uint8_t*)p_data;
 
   SMP_TRACE_DEBUG("%s", __func__);
+
+  if (smp_command_has_invalid_parameters(p_cb)) {
+    uint8_t reason = SMP_INVALID_PARAMETERS;
+    android_errorWriteLog(0x534e4554, "111937065");
+    smp_sm_event(p_cb, SMP_AUTH_CMPL_EVT, &reason);
+    return;
+  }
+
   STREAM_TO_ARRAY(p_cb->tk, p, BT_OCTET16_LEN); /* reuse TK for IRK */
   smp_key_distribution_by_transport(p_cb, NULL);
 }
@@ -950,25 +979,25 @@ void smp_proc_id_info(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
  ******************************************************************************/
 void smp_proc_id_addr(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   uint8_t* p = (uint8_t*)p_data;
-  tBTM_LE_PID_KEYS pid_key;
+  tBTM_LE_KEY_VALUE le_key;
 
   SMP_TRACE_DEBUG("%s", __func__);
   smp_update_key_mask(p_cb, SMP_SEC_KEY_TYPE_ID, true);
 
-  STREAM_TO_UINT8(pid_key.addr_type, p);
-  STREAM_TO_BDADDR(pid_key.static_addr, p);
-  memcpy(pid_key.irk, p_cb->tk, BT_OCTET16_LEN);
+  STREAM_TO_UINT8(le_key.pid_key.addr_type, p);
+  STREAM_TO_BDADDR(le_key.pid_key.static_addr, p);
+  memcpy(le_key.pid_key.irk, p_cb->tk, BT_OCTET16_LEN);
 
   /* to use as BD_ADDR for lk derived from ltk */
   p_cb->id_addr_rcvd = true;
-  p_cb->id_addr_type = pid_key.addr_type;
-  p_cb->id_addr = pid_key.static_addr;
+  p_cb->id_addr_type = le_key.pid_key.addr_type;
+  p_cb->id_addr = le_key.pid_key.static_addr;
 
   /* store the ID key from peer device */
   if ((p_cb->peer_auth_req & SMP_AUTH_BOND) &&
       (p_cb->loc_auth_req & SMP_AUTH_BOND))
     btm_sec_save_le_key(p_cb->pairing_bda, BTM_LE_KEY_PID,
-                        (tBTM_LE_KEY_VALUE*)&pid_key, true);
+                        (tBTM_LE_KEY_VALUE*)&le_key, true);
   smp_key_distribution_by_transport(p_cb, NULL);
 }
 
@@ -977,19 +1006,19 @@ void smp_proc_id_addr(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
  * Description  process security information from peer device
  ******************************************************************************/
 void smp_proc_srk_info(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
-  tBTM_LE_PCSRK_KEYS le_key;
+  tBTM_LE_KEY_VALUE le_key;
 
   SMP_TRACE_DEBUG("%s", __func__);
   smp_update_key_mask(p_cb, SMP_SEC_KEY_TYPE_CSRK, true);
 
   /* save CSRK to security record */
-  le_key.sec_level = p_cb->sec_level;
+  le_key.pcsrk_key.sec_level = p_cb->sec_level;
 
   /* get peer CSRK */
-  maybe_non_aligned_memcpy(le_key.csrk, p_data, BT_OCTET16_LEN);
+  maybe_non_aligned_memcpy(le_key.pcsrk_key.csrk, p_data, BT_OCTET16_LEN);
 
   /* initialize the peer counter */
-  le_key.counter = 0;
+  le_key.pcsrk_key.counter = 0;
 
   if ((p_cb->peer_auth_req & SMP_AUTH_BOND) &&
       (p_cb->loc_auth_req & SMP_AUTH_BOND))

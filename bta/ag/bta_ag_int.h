@@ -98,6 +98,9 @@
   (BTA_AG_FEAT_3WAY | BTA_AG_FEAT_ECNR | BTA_AG_FEAT_VREC | \
    BTA_AG_FEAT_INBAND | BTA_AG_FEAT_VTAG)
 
+/* state machine states */
+enum { BTA_AG_INIT_ST, BTA_AG_OPENING_ST, BTA_AG_OPEN_ST, BTA_AG_CLOSING_ST };
+
 enum {
   /* these events are handled by the state machine */
   BTA_AG_API_REGISTER_EVT = BTA_SYS_EVT_START(BTA_ID_AG),
@@ -351,9 +354,10 @@ typedef struct {
   tBTA_AG_PARSE_MODE parse_mode;           /* parse/pass-through mode */
   uint8_t max_hf_clients;                 /* max hf clients can be connected */
 #if (TWS_AG_ENABLED == TRUE)
-  tBTA_AG_SCO_CB twsp_sco;                 /* peer Sco detail*/
-  tBTA_AG_SCB* main_sm_scb;                /* SCB attached with main sco sm*/
-  tBTA_AG_SCB* sec_sm_scb;                /* SCB attached with secondary sm*/
+  tBTA_AG_SCO_CB twsp_sec_sco;      /*peer Sco detail*/
+  tBTA_AG_SCB* main_sm_scb;         /*SCB attached with main sco sm for TWS+*/
+  tBTA_AG_SCB* sec_sm_scb;          /*SCB attached with secondary sm for TWS+*/
+  tBTA_AG_SCB* main_sm_legacy_scb;  /*SCB attached with main sm for legacy dev*/
 #endif
 } tBTA_AG_CB;
 
@@ -418,12 +422,15 @@ extern bool bta_ag_sco_is_open(tBTA_AG_SCB* p_scb);
 extern bool bta_ag_sco_is_opening(tBTA_AG_SCB* p_scb);
 extern void bta_ag_sco_conn_rsp(tBTA_AG_SCB* p_scb,
                                 tBTM_ESCO_CONN_REQ_EVT_DATA* p_data);
+extern void bta_ag_cback_sco(tBTA_AG_SCB* p_scb, uint8_t event);
 
 /* AT command functions */
 extern void bta_ag_at_hsp_cback(tBTA_AG_SCB* p_scb, uint16_t cmd,
-                                uint8_t arg_type, char* p_arg, int16_t int_arg);
+                                uint8_t arg_type, char* p_arg, char* p_end,
+                                int16_t int_arg);
 extern void bta_ag_at_hfp_cback(tBTA_AG_SCB* p_scb, uint16_t cmd,
-                                uint8_t arg_type, char* p_arg, int16_t int_arg);
+                                uint8_t arg_type, char* p_arg, char* p_end,
+                                int16_t int_arg);
 extern void bta_ag_at_err_cback(tBTA_AG_SCB* p_scb, bool unknown, char* p_arg);
 extern bool bta_ag_inband_enabled(tBTA_AG_SCB* p_scb);
 extern void bta_ag_send_call_inds(tBTA_AG_SCB* p_scb, tBTA_AG_RES result);

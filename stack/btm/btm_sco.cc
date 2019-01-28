@@ -186,7 +186,7 @@ static void btm_esco_conn_rsp(uint16_t sco_inx, uint8_t hci_status,
     if (controller_get_interface()
             ->supports_enhanced_setup_synchronous_connection() &&
         (osi_property_get("vendor.bluetooth.soc", value, "qcombtsoc")&&
-         strcmp(value, "cherokee") == 0)) {
+         (strcmp(value, "cherokee") == 0 || strcmp(value, "hastings") == 0))) {
       /* Use the saved SCO routing */
       p_setup->input_data_path = p_setup->output_data_path =
           btm_cb.sco_cb.sco_route;
@@ -439,7 +439,7 @@ static tBTM_STATUS btm_send_connect_request(uint16_t acl_handle,
     if (controller_get_interface()
             ->supports_enhanced_setup_synchronous_connection() &&
         (osi_property_get("vendor.bluetooth.soc", value, "qcombtsoc")&&
-         strcmp(value, "cherokee") == 0)) {
+         (strcmp(value, "cherokee") == 0 || strcmp(value, "hastings") == 0))) {
       /* Use the saved SCO routing */
       p_setup->input_data_path = p_setup->output_data_path =
           btm_cb.sco_cb.sco_route;
@@ -1145,6 +1145,7 @@ void btm_sco_removed(uint16_t hci_handle, uint8_t reason) {
       p->hci_handle = BTM_INVALID_HCI_HANDLE;
       p->rem_bd_known = false;
       p->esco.p_esco_cback = NULL; /* Deregister eSCO callback */
+      BTM_TRACE_DEBUG("%s: calling disc_cb : %x, idx = %d", __func__, p, xx);
       (*p->p_disc_cb)(xx);
 
       return;
@@ -1178,6 +1179,7 @@ void btm_sco_acl_removed(const RawAddress* bda) {
 
         p->state = SCO_ST_UNUSED;
         p->esco.p_esco_cback = NULL; /* Deregister eSCO callback */
+        BTM_TRACE_DEBUG("%s: calling disc_cb: %x, idx = %d", __func__, p, xx);
         (*p->p_disc_cb)(xx);
       }
     }
@@ -1549,7 +1551,7 @@ tBTM_STATUS BTM_ChangeEScoLinkParms(uint16_t sco_inx,
     if (controller_get_interface()
             ->supports_enhanced_setup_synchronous_connection() &&
          (osi_property_get("vendor.bluetooth.soc", value, "qcombtsoc") &&
-         strcmp(value, "cherokee") == 0)) {
+         (strcmp(value, "cherokee") == 0 || strcmp(value, "hastings") == 0))) {
       /* Use the saved SCO routing */
       p_setup->input_data_path = p_setup->output_data_path =
           btm_cb.sco_cb.sco_route;

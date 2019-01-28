@@ -62,7 +62,7 @@ tBTA_GATTC_CHARACTERISTIC* bta_gattc_get_characteristic_srcb(
 #define BTA_GATT_SDP_DB_SIZE 4096
 
 #define GATT_CACHE_PREFIX "/data/misc/bluetooth/gatt_cache_"
-#define GATT_CACHE_VERSION 2
+#define GATT_CACHE_VERSION 3
 
 static void bta_gattc_generate_cache_file_name(char* buffer, size_t buffer_len,
                                                const RawAddress& bda) {
@@ -556,10 +556,12 @@ static void bta_gattc_incl_srvc_disc_cmpl(uint16_t conn_id,
  ******************************************************************************/
 static void bta_gattc_char_disc_cmpl(uint16_t conn_id,
                                      tBTA_GATTC_SERV* p_srvc_cb) {
-  tBTA_GATTC_ATTR_REC* p_rec = p_srvc_cb->p_srvc_list + p_srvc_cb->cur_char_idx;
+  tBTA_GATTC_ATTR_REC* p_rec = NULL;
+  if(p_srvc_cb->p_srvc_list)
+    p_rec = p_srvc_cb->p_srvc_list + p_srvc_cb->cur_char_idx;
 
   /* if there are characteristic needs to be explored */
-  if (p_srvc_cb->total_char > 0) {
+  if ((p_srvc_cb->total_char > 0) && p_rec) {
     /* add the first characteristic into cache */
     bta_gattc_add_char_to_cache(p_srvc_cb, p_rec->char_decl_handle,
                                 p_rec->s_handle, p_rec->uuid, p_rec->property);

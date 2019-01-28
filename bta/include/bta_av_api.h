@@ -84,6 +84,7 @@
 #define BTA_AV_FAIL_GET_CAP \
   6 /* get capability failed due to no SEP availale on the peer  */
 #define BTA_AV_FAIL_UNSUPPORTED 7 /* Offload Start Rsp handling in open state */
+#define BTA_AV_SUCCESS_BR_HANDOFF 8 /* successful browse handoff operation */
 
 typedef uint8_t tBTA_AV_STATUS;
 
@@ -129,7 +130,7 @@ typedef uint8_t tBTA_AV_HNDL;
 
 /* maximum number of streams created: 1 for audio, 1 for video */
 #ifndef BTA_AV_NUM_STRS
-#define BTA_AV_NUM_STRS 2
+#define BTA_AV_NUM_STRS 5
 #endif
 
 #ifndef BTA_AV_MAX_A2DP_MTU
@@ -521,7 +522,7 @@ typedef union {
 
 /* AV callback */
 typedef void(tBTA_AV_CBACK)(tBTA_AV_EVT event, tBTA_AV* p_data);
-typedef void(tBTA_AV_SINK_DATA_CBACK)(tBTA_AV_EVT event, tBTA_AV_MEDIA* p_data);
+typedef void(tBTA_AV_SINK_DATA_CBACK)(tBTA_AV_EVT event, tBTA_AV_MEDIA* p_data, RawAddress bd_addr);
 
 /* type for stream state machine action functions */
 typedef void (*tBTA_AV_ACT)(void* p_cb, void* p_data);
@@ -838,6 +839,17 @@ void BTA_AvOpenRc(tBTA_AV_HNDL handle);
  ******************************************************************************/
 void BTA_AvCloseRc(uint8_t rc_handle);
 
+ /*******************************************************************************
+  *
+  * Function         BTA_AvBrowseActive
+  *
+  * Description      Set Active Browse AVRCP
+  *
+  * Returns          void
+  ******************************************************************************/
+void BTA_AvBrowseActive(uint8_t rc_handle, const RawAddress& bd_addr,
+                        uint8_t browse_device_evt);
+
 /*******************************************************************************
  *
  * Function         BTA_AvMetaRsp
@@ -900,4 +912,5 @@ void BTA_AvOffloadStartRsp(tBTA_AV_HNDL hndl, tBTA_AV_STATUS status);
 void BTA_AvUpdateTWSDevice(bool isTwsDevice, tBTA_AV_HNDL hndl);
 void BTA_AVSetEarbudRole(uint8_t role, tBTA_AV_HNDL hndl);
 void bta_av_sniff_enable(bool policy_enable, const RawAddress& peer_addr);
+bool bta_av_get_is_peer_state_incoming(const RawAddress& bd_addr);
 #endif /* BTA_AV_API_H */

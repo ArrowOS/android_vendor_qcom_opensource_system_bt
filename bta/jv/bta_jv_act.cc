@@ -248,9 +248,9 @@ tBTA_JV_RFC_CB* bta_jv_rfc_port_to_cb(uint16_t port_handle) {
     if (handle && (handle < BTA_JV_MAX_RFC_CONN)) p_cb = &bta_jv_cb.rfc_cb[handle - 1];
   } else {
     APPL_TRACE_WARNING(
-        "bta_jv_rfc_port_to_cb(port_handle:0x%x):jv handle:0x%x not"
+        "bta_jv_rfc_port_to_cb(port_handle:0x%x) not"
         " FOUND",
-        port_handle, bta_jv_cb.port_cb[port_handle - 1].handle);
+        port_handle);
   }
   return p_cb;
 }
@@ -1173,7 +1173,10 @@ static void bta_jv_l2cap_server_cback(uint16_t gap_handle, uint16_t event,
 
     case GAP_EVT_CONN_CONGESTED:
     case GAP_EVT_CONN_UNCONGESTED:
-      p_cb->p_pm_cb->cong = p_cb->cong = (event == GAP_EVT_CONN_CONGESTED) ? true : false;
+      p_cb->cong = (event == GAP_EVT_CONN_CONGESTED) ? true : false;
+      if (NULL != p_cb->p_pm_cb) {
+        p_cb->p_pm_cb->cong = p_cb->cong;
+      }
       if (p_cb->cong == true)
         bta_jv_pm_conn_congested(p_cb);
       evt_data.l2c_cong.cong = p_cb->cong;

@@ -39,10 +39,19 @@
 #define AVDT_VERSION 0x0102
 #endif
 #define AVDT_VERSION_SYNC 0x0103
+#define AVDTP_VERSION_CONFIG_KEY "AvdtpVersion"
+
+#define AVRCP_VERSION_BIT_MASK 0x0F0F
+#define AVRCP_FEAT_CA_BIT 0x0380
+#define AVRCP_FEAT_BRW_BIT 0x0040
+
+#define AVRCP_MASK_CA_BIT 0x1000
+#define AVRCP_MASK_BRW_BIT 0x2000
 
 /* Maximum size in bytes of the codec capabilities information element. */
-#define AVDT_CODEC_SIZE 20
-
+#define AVDT_CODEC_SIZE 45
+#define AV_REM_CTRL_FEATURES_CONFIG_KEY "AvrcpFeatures"
+#define AV_REM_CTRL_VERSION_CONFIG_KEY "AvrcpCtVersion"
 /* API function return value result codes. */
 #define AVDT_SUCCESS 0      /* Function successful */
 #define AVDT_BAD_PARAMS 1   /* Invalid parameters */
@@ -981,4 +990,14 @@ extern void AVDT_UpdateLinkPktType(uint8_t hdl, uint16_t packet_type);
  *****************************************************************************/
 extern uint8_t AVDT_SetTraceLevel(uint8_t new_level);
 
+/*******************************************************************************
+ *
+ * Function         AVDT_AssociateScb
+ *
+ * Description      Associate BTA layer index with avdt sep indecies
+ *
+ * Returns          void
+ *
+ ******************************************************************************/
+extern void AVDT_AssociateScb(uint8_t handle, const RawAddress& bd_addr);
 #endif /* AVDT_API_H */

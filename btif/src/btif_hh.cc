@@ -44,6 +44,8 @@
 #include "l2c_api.h"
 #include "osi/include/log.h"
 #include "osi/include/osi.h"
+#include "osi/include/properties.h"
+
 
 #define BTIF_HH_APP_ID_MI 0x01
 #define BTIF_HH_APP_ID_KB 0x02
@@ -137,7 +139,7 @@ static tHID_KB_LIST hid_kb_numlock_on_list[] = {{LOGITECH_KB_MX5500_PRODUCT_ID,
 extern void bta_hh_co_destroy(int fd);
 extern void bta_hh_co_write(int fd, uint8_t* rpt, uint16_t len);
 extern bt_status_t btif_dm_remove_bond(const RawAddress* bd_addr);
-extern void bta_hh_co_send_hid_info(btif_hh_device_t* p_dev,
+extern int bta_hh_co_send_hid_info(btif_hh_device_t* p_dev,
                                     const char* dev_name, uint16_t vendor_id,
                                     uint16_t product_id, uint16_t version,
                                     uint8_t ctry_code, int dscp_len,
@@ -825,8 +827,6 @@ static void btif_hh_upstreams_evt(uint16_t event, char* p_param) {
           if (check_cod(&p_data->conn.bda, COD_HID_KEYBOARD) ||
               check_cod(&p_data->conn.bda, COD_HID_COMBO))
             BTA_HhSetIdle(p_data->conn.handle, 0);
-          btif_hh_cb.p_curr_dev =
-              btif_hh_find_connected_dev_by_handle(p_data->conn.handle);
           BTA_HhGetDscpInfo(p_data->conn.handle);
           p_dev->dev_status = BTHH_CONN_STATE_CONNECTED;
           HAL_CBACK(bt_hh_callbacks, connection_state_cb, &(p_dev->bd_addr),
@@ -968,9 +968,10 @@ static void btif_hh_upstreams_evt(uint16_t event, char* p_param) {
       break;
 
     case BTA_HH_GET_DSCP_EVT:
-      len = p_data->dscp_info.descriptor.dl_len;
-      BTIF_TRACE_DEBUG("BTA_HH_GET_DSCP_EVT: len = %d", len);
-      p_dev = btif_hh_cb.p_curr_dev;
+      len = p_data->h_d_info.dscp_info->descriptor.dl_len;
+      BTIF_TRACE_WARNING("BTA_HH_GET_DSCP_EVT: len = %d, dev handle:%d", len,
+          p_data->h_d_info.dev_handle);
+      p_dev = btif_hh_find_connected_dev_by_handle(p_data->h_d_info.dev_handle);
       if (p_dev == NULL) {
         BTIF_TRACE_ERROR(
             "BTA_HH_GET_DSCP_EVT: No HID device is currently connected");
@@ -996,26 +997,37 @@ static void btif_hh_upstreams_evt(uint16_t event, char* p_param) {
         }
 
         BTIF_TRACE_WARNING("%s: name = %s", __func__, cached_name);
-        bta_hh_co_send_hid_info(p_dev, cached_name, p_data->dscp_info.vendor_id,
-                                p_data->dscp_info.product_id,
-                                p_data->dscp_info.version,
-                                p_data->dscp_info.ctry_code, len,
-                                p_data->dscp_info.descriptor.dsc_list);
+        if (bta_hh_co_send_hid_info(p_dev, cached_name, p_data->h_d_info.dscp_info->vendor_id,
+                                p_data->h_d_info.dscp_info->product_id,
+                                p_data->h_d_info.dscp_info->version,
+                                p_data->h_d_info.dscp_info->ctry_code, len,
+                                p_data->h_d_info.dscp_info->descriptor.dsc_list)) {
+            BTIF_TRACE_ERROR("BTA_HH_GET_DSCP_EVT: Unable to write decriptor, "
+                "disconnecting the device");
+            char hogp_pts_support[PROPERTY_VALUE_MAX] = {0};
+            osi_property_get("vendor.bt.pts.certification", hogp_pts_support, "false");
+            if (strcmp(hogp_pts_support, "true")) {
+              /* Skipping the disconnect for PTS certification.
+               * Because PTS is sending dscp_len as '0'.*/
+              btif_hh_disconnect(&p_dev->bd_addr);
+            }
+            return;
+        }
         if (btif_hh_add_added_dev(p_dev->bd_addr, p_dev->attr_mask)) {
           tBTA_HH_DEV_DSCP_INFO dscp_info;
           bt_status_t ret;
-          btif_hh_copy_hid_info(&dscp_info, &p_data->dscp_info);
+          btif_hh_copy_hid_info(&dscp_info, p_data->h_d_info.dscp_info);
           VLOG(1) << "BTA_HH_GET_DSCP_EVT:bda = " << p_dev->bd_addr;
           BTA_HhAddDev(p_dev->bd_addr, p_dev->attr_mask, p_dev->sub_class,
                        p_dev->app_id, dscp_info);
           // write hid info to nvram
           ret = btif_storage_add_hid_device_info(
               &(p_dev->bd_addr), p_dev->attr_mask, p_dev->sub_class,
-              p_dev->app_id, p_data->dscp_info.vendor_id,
-              p_data->dscp_info.product_id, p_data->dscp_info.version,
-              p_data->dscp_info.ctry_code, p_data->dscp_info.ssr_max_latency,
-              p_data->dscp_info.ssr_min_tout, len,
-              p_data->dscp_info.descriptor.dsc_list);
+              p_dev->app_id, p_data->h_d_info.dscp_info->vendor_id,
+              p_data->h_d_info.dscp_info->product_id, p_data->h_d_info.dscp_info->version,
+              p_data->h_d_info.dscp_info->ctry_code, p_data->h_d_info.dscp_info->ssr_max_latency,
+              p_data->h_d_info.dscp_info->ssr_min_tout, len,
+              p_data->h_d_info.dscp_info->descriptor.dsc_list);
 
           ASSERTC(ret == BT_STATUS_SUCCESS, "storing hid info failed", ret);
           BTIF_TRACE_WARNING("BTA_HH_GET_DSCP_EVT: Called add device");
@@ -1033,9 +1045,9 @@ static void btif_hh_upstreams_evt(uint16_t event, char* p_param) {
         /*Sync HID Keyboard lockstates */
         tmplen = sizeof(hid_kb_numlock_on_list) / sizeof(tHID_KB_LIST);
         for (i = 0; i < tmplen; i++) {
-          if (p_data->dscp_info.vendor_id ==
+          if (p_data->h_d_info.dscp_info->vendor_id ==
                   hid_kb_numlock_on_list[i].version_id &&
-              p_data->dscp_info.product_id ==
+              p_data->h_d_info.dscp_info->product_id ==
                   hid_kb_numlock_on_list[i].product_id) {
             BTIF_TRACE_DEBUG(
                 "%s() idx[%d] Enabling "
@@ -1134,7 +1146,7 @@ void bte_hh_evt(tBTA_HH_EVT event, tBTA_HH* p_data) {
   else if (BTA_HH_CLOSE_EVT == event)
     param_len = sizeof(tBTA_HH_CBDATA);
   else if (BTA_HH_GET_DSCP_EVT == event)
-    param_len = sizeof(tBTA_HH_DEV_DSCP_INFO);
+    param_len = sizeof(tBTA_HH_DEV_HANDLE_DSCP_INFO);
   else if ((BTA_HH_GET_PROTO_EVT == event) || (BTA_HH_GET_RPT_EVT == event) ||
            (BTA_HH_GET_IDLE_EVT == event))
     param_len = sizeof(tBTA_HH_HSDATA);
@@ -1677,13 +1689,13 @@ static void cleanup(void) {
   for (i = 0; i < BTIF_HH_MAX_HID; i++) {
     p_dev = &btif_hh_cb.devices[i];
     if (p_dev->dev_status != BTHH_CONN_STATE_UNKNOWN && p_dev->fd >= 0) {
+      p_dev->hh_keep_polling = 0;
+      p_dev->hh_poll_thread_id = -1;
       BTIF_TRACE_DEBUG("%s: Closing uhid fd = %d", __func__, p_dev->fd);
       if (p_dev->fd >= 0) {
         bta_hh_co_destroy(p_dev->fd);
         p_dev->fd = -1;
       }
-      p_dev->hh_keep_polling = 0;
-      p_dev->hh_poll_thread_id = -1;
     }
   }
 

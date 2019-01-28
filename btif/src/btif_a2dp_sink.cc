@@ -43,7 +43,7 @@
 /**
  * The receiving queue buffer size.
  */
-#define MAX_INPUT_A2DP_FRAME_QUEUE_SZ (MAX_PCM_FRAME_NUM_PER_TICK * 2)
+#define MAX_INPUT_A2DP_FRAME_QUEUE_SZ (MAX_PCM_FRAME_NUM_PER_TICK * 4)
 
 #define BTIF_SINK_MEDIA_TIME_TICK_MS 20
 
@@ -227,7 +227,7 @@ static void btif_a2dp_sink_command_ready(fixed_queue_t* queue,
                                          UNUSED_ATTR void* context) {
   BT_HDR* p_msg = (BT_HDR*)fixed_queue_dequeue(queue);
 
-  LOG_VERBOSE(LOG_TAG, "%s: event %d %s", __func__, p_msg->event,
+  LOG_DEBUG(LOG_TAG, "%s: event %d %s", __func__, p_msg->event,
               dump_media_event(p_msg->event));
 
   switch (p_msg->event) {
@@ -349,8 +349,7 @@ static void btif_a2dp_sink_handle_inc_media(tBT_SBC_HDR* p_msg) {
   uint32_t sbc_frame_len = p_msg->len - 1;
   availPcmBytes = sizeof(btif_a2dp_sink_pcm_data);
 
-  int idx = btif_av_get_latest_playing_device_idx();
-  if ((btif_av_get_peer_sep(idx) == AVDT_TSEP_SNK) ||
+  if ((btif_av_get_peer_sep() == AVDT_TSEP_SNK) ||
       (btif_a2dp_sink_cb.rx_flush)) {
     APPL_TRACE_DEBUG("State Changed happened in this tick");
     return;
@@ -481,6 +480,11 @@ static void btif_a2dp_sink_decoder_update_event(
                    p_buf->codec_info[1], p_buf->codec_info[2],
                    p_buf->codec_info[3], p_buf->codec_info[4],
                    p_buf->codec_info[5], p_buf->codec_info[6]);
+
+  // clear earlier alarm (if any) and media packet queue
+  alarm_free(btif_a2dp_sink_cb.decode_alarm);
+  btif_a2dp_sink_cb.decode_alarm = NULL;
+  btif_a2dp_sink_audio_rx_flush_event();
 
   int sample_rate = A2DP_GetTrackSampleRate(p_buf->codec_info);
   if (sample_rate == -1) {
@@ -624,7 +628,9 @@ static void btif_a2dp_sink_set_focus_state_event(
 void btif_a2dp_sink_set_audio_track_gain(float gain) {
   APPL_TRACE_DEBUG("%s set gain to %f", __func__, gain);
 #ifndef OS_GENERIC
-  BtifAvrcpSetAudioTrackGain(btif_a2dp_sink_cb.audio_track, gain);
+  if (btif_a2dp_sink_cb.audio_track != NULL) {
+    BtifAvrcpSetAudioTrackGain(btif_a2dp_sink_cb.audio_track, gain);
+  }
 #endif
 }
 

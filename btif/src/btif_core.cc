@@ -144,6 +144,7 @@ static void btif_sendmsg(void* p_msg);
  *  Externs
  ******************************************************************************/
 extern fixed_queue_t* btu_hci_msg_queue;
+extern bool twsplus_enabled;
 
 void btif_dm_execute_service_request(uint16_t event, char* p_param);
 #ifdef BTIF_DM_OOB_TEST
@@ -169,7 +170,10 @@ static void btif_context_switched(void* p_msg) {
   /* each callback knows how to parse the data */
   if (p->p_cb) {
     BTIF_TRACE_VERBOSE("btif_context_switched for event: %u", p->event);
-    p->p_cb(p->event, p->p_param);
+    if(p->len)
+      p->p_cb(p->event, p->p_param);
+    else
+      p->p_cb(p->event, NULL);
   } else {
     BTIF_TRACE_ERROR("btif_context_switched with null callback");
   }
@@ -213,6 +217,7 @@ bt_status_t btif_transfer_context(tBTIF_CBACK* p_cback, uint16_t event,
   } else if (p_params) {
     memcpy(p_msg->p_param, p_params, param_len); /* callback parameter data */
   }
+  p_msg->len = param_len;
 
   btif_sendmsg(p_msg);
 
@@ -359,6 +364,14 @@ bt_status_t btif_init_bluetooth() {
   LOG_INFO(LOG_TAG, "%s entered", __func__);
 
   bte_main_boot_entry();
+
+  char twsplus_prop[PROPERTY_VALUE_MAX] = "false";
+  property_get("persist.vendor.btstack.enable.twsplus", twsplus_prop, "false");
+  if(!strcmp(twsplus_prop, "false")) {
+    twsplus_enabled = false;
+  } else {
+    twsplus_enabled = true;
+  }
 
   bt_jni_workqueue_thread = thread_new_sized(BT_JNI_WORKQUEUE_NAME, MAX_JNI_WORKQUEUE_COUNT);
   if (bt_jni_workqueue_thread == NULL) {
@@ -1188,9 +1201,9 @@ bt_status_t btif_enable_service(tBTA_SERVICE_ID service_id) {
    * Otherwise, we just set the flag. On BT_Enable, the DM will trigger
    * enable for the profiles that have been enabled */
 
-  btif_enabled_services |= (1 << service_id);
+  btif_enabled_services |= ((tBTA_SERVICE_MASK)1 << service_id);
 
-  BTIF_TRACE_DEBUG("%s: current services:0x%x", __func__,
+  BTIF_TRACE_DEBUG("%s: current services:0x%" PRIx64, __func__,
                    btif_enabled_services);
 
   if (btif_is_enabled()) {
@@ -1214,7 +1227,7 @@ bt_status_t btif_enable_service(tBTA_SERVICE_ID service_id) {
  ******************************************************************************/
 bt_status_t btif_reset_service(tBTA_SERVICE_ID service_id) {
 
-  btif_enabled_services &= (tBTA_SERVICE_MASK)(~(1 << service_id));
+  btif_enabled_services &= ~((tBTA_SERVICE_MASK)1 << service_id);
   return BT_STATUS_SUCCESS;
 }
 /*******************************************************************************
@@ -1237,9 +1250,9 @@ bt_status_t btif_disable_service(tBTA_SERVICE_ID service_id) {
    * be triggerred. Otherwise, we just need to clear the service_id in the mask
    */
 
-  btif_enabled_services &= (tBTA_SERVICE_MASK)(~(1 << service_id));
+  btif_enabled_services &= ~((tBTA_SERVICE_MASK)1 << service_id);
 
-  BTIF_TRACE_DEBUG("%s: Current Services:0x%x", __func__,
+  BTIF_TRACE_DEBUG("%s: Current Services:0x%" PRIx64, __func__,
                    btif_enabled_services);
 
   if (btif_is_enabled()) {

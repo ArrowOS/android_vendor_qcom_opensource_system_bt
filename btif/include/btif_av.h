@@ -66,6 +66,7 @@ typedef enum {
   BTIF_AV_SETUP_CODEC_REQ_EVT,
   BTIF_AV_TRIGGER_HANDOFF_REQ_EVT,
   BTIF_AV_ENCODER_MODE_CHANGED_EVT,
+  BTIF_AV_SINK_QUICK_HANDOFF_EVT,
 } btif_av_sm_event_t;
 
 /*******************************************************************************
@@ -181,7 +182,7 @@ bool btif_av_is_connected(void);
  *
  ******************************************************************************/
 
-uint8_t btif_av_get_peer_sep(int index);
+uint8_t btif_av_get_peer_sep();
 
 /*******************************************************************************
  *
@@ -286,6 +287,17 @@ bool btif_av_is_multicast_supported();
  *******************************************************************************/
 void btif_av_get_peer_addr(RawAddress *peer_bda);
 
+/*******************************************************************************
+ *
+ * Function         btif_av_clear_remote_start_timer
+ *
+ * Description      Clear latest av start timer
+ *
+ * Returns          bool
+ *
+ ******************************************************************************/
+void  btif_av_clear_remote_start_timer(int index);
+
 /******************************************************************************
  *
  * Function         btif_get_latest_playing_device_idx
@@ -295,6 +307,17 @@ void btif_av_get_peer_addr(RawAddress *peer_bda);
  * Returns          index
  *******************************************************************************/
 int btif_av_get_latest_playing_device_idx();
+
+/******************************************************************************
+ *
+ * Function         btif_get_latest_playing_device_idx
+ *
+ * Description      Get the index of AV where streaming is happening but not
+                    remote started index
+ *
+ * Returns          index
+ *******************************************************************************/
+int btif_av_get_latest_stream_device_idx();
 
 /******************************************************************************
  *
@@ -338,7 +361,7 @@ int btif_av_get_latest_playing_device_idx();
  * Returns          void
  *
  ******************************************************************************/
-void btif_av_trigger_dual_handoff(bool handoff, RawAddress address);
+void btif_av_trigger_dual_handoff(bool handoff, int current_active_index, int previous_active_index);
 
 /*******************************************************************************
  *
@@ -479,5 +502,37 @@ RawAddress btif_av_get_addr_by_index(int idx);
 ** Returns          int64_t
 *******************************************************************************/
 int64_t btif_get_average_delay();
+
+/*******************************************************************************
+**
+** Function         btif_is_a2dp_sink_handoff_required
+**
+** Description      To check if there is need for Soft-Handoff in A2DP Sink.
+**
+** Returns          bool
+*******************************************************************************/
+bool btif_is_a2dp_sink_handoff_required(int idx);
+
+/*******************************************************************************
+**
+** Function         btif_initiate_sink_handoff
+**
+** Description      Intiates operations required to handle Soft-Handoff
+**
+** Returns          void
+*******************************************************************************/
+void btif_initiate_sink_handoff(int idx, bool audio_state_changed);
+
+/*******************************************************************************
+**
+** Function         btif_get_max_allowable_sink_connections
+**
+** Description      Get maximum number of supported Sink Connections
+**                  Currently, Default:2, Max:2
+**                  TODO: Q: Range:{1,5} Deafault:3 Max:5
+**
+** Returns          void
+*******************************************************************************/
+int btif_get_max_allowable_sink_connections();
 
 #endif /* BTIF_AV_H */
