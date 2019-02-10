@@ -206,6 +206,15 @@ typedef enum {
   //is used avoid collision.
   INTEROP_AVRCP_BROWSE_OPEN_CHANNEL_COLLISION,
 
+  //Some remote devices don't support sniff mode when the SCO is connected.
+  //For such devices, disable sniff mode after SCO is connected and make
+  //the link as active.
+  INTEROP_DISABLE_SNIFF_LINK_DURING_SCO,
+
+  // Enable power level 10 adaptive control in FW side for remote devices
+  // in this whitelist item.
+  INTEROP_ENABLE_PL10_ADAPTIVE_CONTROL,
+
   END_OF_INTEROP_LIST
 } interop_feature_t;
 

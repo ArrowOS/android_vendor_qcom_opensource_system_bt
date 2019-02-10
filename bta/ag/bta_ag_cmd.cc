@@ -979,7 +979,14 @@ void bta_ag_at_hfp_cback(tBTA_AG_SCB* p_scb, uint16_t cmd, uint8_t arg_type,
 
     case BTA_AG_AT_BLDN_EVT:
       /* Do not send OK, App will send error or OK depending on
-      ** last dial number enabled or not */
+      ** last dial number enabled or not
+      ** If SLC didn't happen yet, just send ERROR*/
+      if (!p_scb->svc_conn) {
+        event = 0;
+        APPL_TRACE_WARNING("%s: Sending ERROR from stack for BLDN received"\
+                           " before SLC", __func__);
+        bta_ag_send_error(p_scb, BTA_AG_ERR_OP_NOT_SUPPORTED);
+      }
       break;
 
     case BTA_AG_AT_D_EVT:
@@ -1994,6 +2001,9 @@ void bta_ag_send_ring(tBTA_AG_SCB* p_scb, UNUSED_ATTR tBTA_AG_DATA* p_data) {
 
   } else {
 #endif
+
+      APPL_TRACE_IMP("%s: exiting sniff for sending RING", __func__);
+      bta_sys_busy(BTA_ID_AG, p_scb->app_id, p_scb->peer_addr);
       /* send RING */
       bta_ag_send_result(p_scb, BTA_AG_LOCAL_RES_RING, NULL, 0);
 
@@ -2005,6 +2015,9 @@ void bta_ag_send_ring(tBTA_AG_SCB* p_scb, UNUSED_ATTR tBTA_AG_DATA* p_data) {
 
       bta_sys_start_timer(p_scb->ring_timer, BTA_AG_RING_TIMEOUT_MS,
                       BTA_AG_RING_TIMEOUT_EVT, bta_ag_scb_to_idx(p_scb));
+
+      APPL_TRACE_IMP("%s: resetting idle timer after sending RING", __func__);
+      bta_sys_idle(BTA_ID_AG, p_scb->app_id, p_scb->peer_addr);
 
 #if (TWS_AG_ENABLED == TRUE)
   }

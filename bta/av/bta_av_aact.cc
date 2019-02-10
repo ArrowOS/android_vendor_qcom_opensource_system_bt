@@ -862,6 +862,46 @@ static void bta_av_a2dp_sdp_cback(bool found, tA2DP_Service* p_service) {
 
 /*******************************************************************************
  *
+ * Function         bta_av_a2dp_sdp_cback2
+ *
+ * Description      A2DP service discovery callback2.
+ *
+ * Returns          void
+ *
+ ******************************************************************************/
+static void bta_av_a2dp_sdp_cback2(bool found, tA2DP_Service* p_service, tBTA_AV_SCB* p_scb) {
+  if (p_scb == NULL) {
+    APPL_TRACE_ERROR("%s: invalid p_scb", __func__);
+    return;
+  }
+
+  tBTA_AV_SDP_RES* p_msg =
+      (tBTA_AV_SDP_RES*)osi_malloc(sizeof(tBTA_AV_SDP_RES));
+
+  if (!found && (p_scb->skip_sdp == true)) {
+    p_msg->hdr.event = BTA_AV_SDP_DISC_OK_EVT;
+    p_scb->avdt_version = AVDT_VERSION;
+    p_scb->skip_sdp = false;
+    APPL_TRACE_WARNING("%s: Continue AVDTP signaling process for incoming A2dp connection",
+                      __func__);
+  } else {
+    p_msg->hdr.event =
+        (found) ? BTA_AV_SDP_DISC_OK_EVT : BTA_AV_SDP_DISC_FAIL_EVT;
+    if (found && (p_service != NULL))
+      p_scb->avdt_version = p_service->avdt_version;
+    else
+      p_scb->avdt_version = 0x00;
+  }
+  p_msg->hdr.layer_specific = p_scb->hndl;
+
+  bta_sys_sendmsg(p_msg);
+  if (!found)
+    APPL_TRACE_ERROR ("bta_av_a2dp_sdp_cback2 SDP record not found");
+  bta_sys_conn_close(BTA_ID_AV, p_scb->hdi, p_scb->peer_addr);
+}
+
+/*******************************************************************************
+ *
  * Function         bta_av_adjust_seps_idx
  *
  * Description      adjust the sep_idx
@@ -1138,6 +1178,10 @@ void bta_av_do_disc_a2dp(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
             if (!interop_match_addr_or_name(INTEROP_DISABLE_ROLE_SWITCH,
                                           &p_scbi->peer_addr)) {
               APPL_TRACE_DEBUG("%s:RS disabled, returning",__func__);
+#if (TWS_ENABLED == TRUE)
+              if (p_scbi->tws_device)
+                AVDT_UpdateServiceBusyState(false);
+#endif
               return;
             }else {
               APPL_TRACE_DEBUG("%s: Other connected remote is blacklisted for RS",__func__);
@@ -1189,15 +1233,10 @@ void bta_av_do_disc_a2dp(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
     }
     p_scb->skip_sdp = false;
     p_scb->uuid_int = p_data->api_open.uuid;
-    /* only one A2DP find service is active at a time */
-    bta_av_cb.handle = p_scb->hndl;
     APPL_TRACE_WARNING("%s: Skip Sdp for incoming A2dp connection", __func__);
-    bta_av_a2dp_sdp_cback(true, &a2dp_ser);
+    bta_av_a2dp_sdp_cback2(true, &a2dp_ser, p_scb);
     return;
   } else {
-    /* only one A2D find service is active at a time */
-    bta_av_cb.handle = p_scb->hndl;
-
     /* set up parameters */
     db_params.db_len = BTA_AV_DISC_BUF_SIZE;
     db_params.num_attr = 3;
@@ -1212,12 +1251,16 @@ void bta_av_do_disc_a2dp(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
     APPL_TRACE_DEBUG("%s: uuid_int 0x%x, Doing SDP For 0x%x", __func__,
                     p_scb->uuid_int, sdp_uuid);
     if (A2DP_FindService(sdp_uuid, p_scb->peer_addr, &db_params,
-                        bta_av_a2dp_sdp_cback) == A2DP_SUCCESS)
+                        bta_av_a2dp_sdp_cback) == A2DP_SUCCESS) {
+      APPL_TRACE_DEBUG("%s: A2DP find service return SUCCESS", __func__);
+      /* only one A2D find service is active at a time */
+      bta_av_cb.handle = p_scb->hndl;
       return;
+    }
 
     /* when the code reaches here, either the DB is NULL
      * or A2DP_FindService is not successful */
-    bta_av_a2dp_sdp_cback(true, NULL);
+    bta_av_a2dp_sdp_cback2(true, NULL, p_scb);
   }
 }
 
@@ -1280,6 +1323,14 @@ void bta_av_cleanup(tBTA_AV_SCB* p_scb, UNUSED_ATTR tBTA_AV_DATA* p_data) {
   p_scb->offload_start_pending = false;
   p_scb->skip_sdp = false;
   p_scb->coll_mask = 0;
+
+  p_scb->cfg.psc_mask = AVDT_PSC_TRANS;
+  if (bta_av_cb.features & BTA_AV_FEAT_DELAY_RPT)
+    p_scb->cfg.psc_mask |= (AVDT_PSC_DELAY_RPT);
+#if (AVDT_REPORTING == TRUE)
+  if (bta_av_cb.features & BTA_AV_FEAT_REPORT)
+    p_scb->cfg.psc_mask |= (AVDT_PSC_REPORT);
+#endif
 
   p_scb->skip_sdp = false;
   if (p_scb->deregistring) {
@@ -2212,7 +2263,7 @@ void bta_av_getcap_results(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
                     __func__, media_type, p_scb->media_type, codec_type,
                     p_scb->p_cap->codec_info[A2DP_SBC_IE_MIN_BITPOOL_OFFSET],
                     p_scb->p_cap->codec_info[A2DP_SBC_IE_MAX_BITPOOL_OFFSET]);
-  if (codec_type ==A2DP_MEDIA_CT_SBC ) {
+  if (codec_type == A2DP_MEDIA_CT_SBC ) {
     //minbitpool < 2, then set minbitpool = 2
     if ((p_scb->p_cap->codec_info[A2DP_SBC_IE_MIN_BITPOOL_OFFSET]) < A2DP_SBC_IE_MIN_BITPOOL) {
       p_scb->p_cap->codec_info[A2DP_SBC_IE_MIN_BITPOOL_OFFSET] = A2DP_SBC_IE_MIN_BITPOOL;
@@ -2255,7 +2306,7 @@ void bta_av_getcap_results(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
   APPL_TRACE_DEBUG("%s: min/max bitpool: %x/%x", __func__,
                      p_scb->p_cap->codec_info[A2DP_SBC_IE_MIN_BITPOOL_OFFSET],
                      p_scb->p_cap->codec_info[A2DP_SBC_IE_MAX_BITPOOL_OFFSET]);
-  A2DP_DumpCodecInfo(p_scb->cfg.codec_info);
+  A2DP_DumpCodecInfo(p_scb->p_cap->codec_info);
 
   /* if codec present and we get a codec configuration */
   if ((p_scb->p_cap->num_codec != 0) && (media_type == p_scb->media_type) &&
@@ -2267,7 +2318,7 @@ void bta_av_getcap_results(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
 
     APPL_TRACE_DEBUG("%s: result: sep_info_idx=%d", __func__,
                      p_scb->sep_info_idx);
-    A2DP_DumpCodecInfo(p_scb->cfg.codec_info);
+    A2DP_DumpCodecInfo(p_scb->p_cap->codec_info);
 
     uuid_int = p_scb->uuid_int;
     APPL_TRACE_DEBUG("%s: initiator UUID = 0x%x", __func__, uuid_int);
