@@ -366,7 +366,7 @@ tBTA_AV_HNDL btif_av_get_reconfig_dev_hndl();
 void btif_av_reset_codec_reconfig_flag(RawAddress address);
 void btif_av_reinit_audio_interface();
 bool btif_av_is_suspend_stop_pending_ack();
-static void allow_connection(int is_valid, RawAddress *bd_addr); // gghai
+static void allow_connection(int is_valid, RawAddress *bd_addr);
 
 
 const char* dump_av_sm_state_name(btif_av_state_t state) {
@@ -730,6 +730,7 @@ static void btif_av_check_and_start_collission_timer(int index) {
 
 static bool btif_av_state_idle_handler(btif_sm_event_t event, void* p_data, int index) {
   char a2dp_role[255] = "false";
+  bool other_device_connected = false;
   BTIF_TRACE_IMP("%s event:%s flags %x on index %x", __func__,
                    dump_av_sm_event_name((btif_av_sm_event_t)event),
                    btif_av_cb[index].flags, index);
@@ -769,7 +770,13 @@ static bool btif_av_state_idle_handler(btif_sm_event_t event, void* p_data, int 
       /* This API will be called twice at initialization
       ** Idle can be moved when device is disconnected too.
       ** Take care of other connected device here.*/
-      if (!btif_av_is_connected()) {
+      for (int i = 0; i < btif_max_av_clients; i++) {
+        if ((i != index) && btif_av_get_valid_idx(i)) {
+          other_device_connected = true;
+          break;
+        }
+      }
+      if (other_device_connected == false) {
         BTIF_TRACE_EVENT("reset A2dp states in IDLE ");
         bta_av_co_init(btif_av_cb[index].codec_priorities);
         btif_a2dp_on_idle();
@@ -777,7 +784,6 @@ static bool btif_av_state_idle_handler(btif_sm_event_t event, void* p_data, int 
         //There is another AV connection, update current playin
         BTIF_TRACE_EVENT("idle state for index %d init_co", index);
         bta_av_co_peer_init(btif_av_cb[index].codec_priorities, index);
-
       }
       if (!btif_av_is_playing_on_other_idx(index) &&
            btif_av_is_split_a2dp_enabled()) {
@@ -859,7 +865,7 @@ static bool btif_av_state_idle_handler(btif_sm_event_t event, void* p_data, int 
       if (bt_av_src_callbacks != NULL) {
         BTIF_TRACE_DEBUG("Calling connection priority callback ");
         idle_rc_event = event;
-#ifdef BT_AV_SHO_FEATURE // gghai
+#ifdef BT_AV_SHO_FEATURE
         HAL_CBACK(bt_av_src_callbacks, connection_priority_cb, // call allow_conn for all callbacks
            &(btif_av_cb[index].peer_bda));
 #else
@@ -3565,7 +3571,7 @@ static bt_status_t init_src(
   return status;
 }
 
-static bt_status_t init_src( // gghai
+static bt_status_t init_src(
     btav_source_callbacks_t* callbacks,
     int max_connected_audio_devices,
     std::vector<btav_a2dp_codec_config_t> codec_priorities) {
@@ -3643,7 +3649,7 @@ void btif_get_latest_playing_device(RawAddress *address) {
         //copy bdaddrsss
     *address = btif_av_cb[index].peer_bda;
   else
-    address = nullptr;
+    *address = RawAddress::kEmpty;
 }
 
 /*******************************************************************************
@@ -5081,7 +5087,7 @@ void btif_av_update_multicast_state(int index) {
 
   if (prev_multicast_state != enable_multicast) {
     BTA_AvEnableMultiCast(enable_multicast, btif_av_cb[index].bta_handle);
-#ifdef BT_AV_SHO_FEATURE // gghai
+#ifdef BT_AV_SHO_FEATURE
     HAL_CBACK(bt_av_src_callbacks, multicast_state_cb, enable_multicast);
 #endif
   }
