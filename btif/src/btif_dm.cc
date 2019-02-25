@@ -663,6 +663,8 @@ void bond_state_changed(bt_status_t status, const RawAddress& bd_addr,
   if (state == BT_BOND_STATE_NONE) {
     // Update Pbap 1.2 entry, set rebonded to true
     update_pce_entry_after_cancelling_bonding(bd_addr);
+    // Update Map 1.4 entry, set rebonded to true
+    update_mce_entry_after_cancelling_bonding(bd_addr);
   }
 }
 
@@ -1914,6 +1916,8 @@ static void btif_dm_upstreams_evt(uint16_t event, char* p_param) {
       btif_storage_load_bonded_devices();
 
       btif_tws_plus_load_tws_devices();
+
+      btif_vendor_update_add_on_features();
 
       btif_enable_bluetooth_evt(p_data->enable.status);
     } break;
