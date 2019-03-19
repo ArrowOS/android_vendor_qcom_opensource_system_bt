@@ -50,11 +50,9 @@ typedef uint8_t tBTA_STATUS;
  * Service ID
  *
  * NOTES: When you add a new Service ID for BTA AND require to change the value
- * of BTA_MAX_SERVICE_ID,
- *        make sure that the correct security ID of the new service from
- * Security service definitions (btm_api.h)
- *        should be added to bta_service_id_to_btm_srv_id_lkup_tbl table in
- * bta_dm_act.c.
+ * of BTA_MAX_SERVICE_ID, make sure that the correct security ID of the new
+ * service from Security service definitions (btm_api.h) should be added to
+ * bta_service_id_to_btm_srv_id_lkup_tbl table in bta_dm_act.cc
  */
 
 #define BTA_RES_SERVICE_ID 0         /* Reserved */
@@ -399,6 +397,8 @@ typedef uint8_t tBTA_SIG_STRENGTH_MASK;
 #define BTA_DM_PKT_TYPE_CHG_EVT 30 /* PACKET TYPE Change event. */
 #define BTA_DM_REM_NAME_EVT 32 /* Remote name event */
 #define BTA_DM_IOT_INFO_EVT 33 /* IOT device info */
+#define BTA_DM_SSR_EVT 34 /* SSR event */
+
 typedef uint8_t tBTA_DM_SEC_EVT;
 
 /* Structure associated with BTA_DM_ENABLE_EVT */
@@ -495,9 +495,9 @@ typedef union {
 typedef uint8_t tBTA_DM_BLE_LOCAL_KEY_MASK;
 
 typedef struct {
-  BT_OCTET16 ir;
-  BT_OCTET16 irk;
-  BT_OCTET16 dhk;
+  Octet16 ir;
+  Octet16 irk;
+  Octet16 dhk;
 } tBTA_BLE_LOCAL_ID_KEYS;
 
 #define BTA_DM_SEC_GRANTED BTA_SUCCESS
@@ -522,7 +522,7 @@ typedef struct {
   RawAddress bd_addr;  /* BD address peer device. */
   BD_NAME bd_name;     /* Name of peer device. */
   bool key_present;    /* Valid link key value in key element */
-  LINK_KEY key;        /* Link key associated with peer device. */
+  LinkKey key;         /* Link key associated with peer device. */
   uint8_t key_type;    /* The type of Link Key */
   bool success;        /* true of authentication succeeded, false if failed. */
   uint8_t fail_reason; /* The HCI reason/error code for when success=false */
@@ -737,7 +737,7 @@ typedef union {
   tBTA_DM_BLE_KEY ble_key;            /* BLE SMP keys used when pairing */
   tBTA_BLE_LOCAL_ID_KEYS ble_id_keys; /* IR event */
   tBTA_DM_IOT_INFO_DATA iot_info;
-  BT_OCTET16 ble_er;                  /* ER event data */
+  Octet16 ble_er;                     /* ER event data */
 } tBTA_DM_SEC;
 
 /* Security callback */
@@ -1391,9 +1391,10 @@ extern void BTA_DmConfirm(const RawAddress& bd_addr, bool accept);
  *
  ******************************************************************************/
 extern void BTA_DmAddDevice(const RawAddress& bd_addr, DEV_CLASS dev_class,
-                            LINK_KEY link_key, tBTA_SERVICE_MASK trusted_mask,
-                            bool is_trusted, uint8_t key_type,
-                            tBTA_IO_CAP io_cap, uint8_t pin_length);
+                            const LinkKey& link_key,
+                            tBTA_SERVICE_MASK trusted_mask, bool is_trusted,
+                            uint8_t key_type, tBTA_IO_CAP io_cap,
+                            uint8_t pin_length);
 
 /*******************************************************************************
  *
@@ -1537,11 +1538,6 @@ extern int32_t BTA_DmPcmResample(void* p_src, uint32_t in_bytes, void* p_dst);
  ******************************************************************************/
 extern void BTA_DmBleSecurityGrant(const RawAddress& bd_addr,
                                    tBTA_DM_BLE_SEC_GRANT res);
-
-/**
- * Set BLE connectable mode to auto connect
- */
-extern void BTA_DmBleStartAutoConn();
 
 /*******************************************************************************
  *

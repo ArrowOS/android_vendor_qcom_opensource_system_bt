@@ -197,8 +197,8 @@ bool btm_ble_get_acl_remote_addr(tBTM_SEC_DEV_REC* p_dev_rec,
       break;
 
     case BTM_BLE_ADDR_STATIC:
-      conn_addr = p_dev_rec->ble.static_addr;
-      *p_addr_type = p_dev_rec->ble.static_addr_type;
+      conn_addr = p_dev_rec->ble.identity_addr;
+      *p_addr_type = p_dev_rec->ble.identity_addr_type;
       break;
 
     default:
@@ -848,7 +848,7 @@ tBTM_STATUS BTM_SetLinkPolicy(const RawAddress& remote_bda,
   /*  BTM_TRACE_API ("%s: requested settings: 0x%04x", __func__, *settings ); */
 
   /* First, check if hold mode is supported */
-  if (*settings != HCI_DISABLE_ALL_LM_MODES) {
+  if (*settings != HCI_POLICY_SETTINGS_DEFAULT_MODE) {
     if ((*settings & HCI_ENABLE_MASTER_SLAVE_SWITCH) &&
         (!HCI_SWITCH_SUPPORTED(localFeatures))) {
       *settings &= (~HCI_ENABLE_MASTER_SLAVE_SWITCH);
@@ -2024,7 +2024,7 @@ tBTM_STATUS BTM_RegBusyLevelNotif(tBTM_BL_CHANGE_CB* p_cb, uint8_t* p_level,
 tBTM_STATUS BTM_SetA2dpStreamQoS(const RawAddress& bd, tBTM_CMPL_CB* p_cb) {
   FLOW_SPEC p_flow;
 
-  p_flow.qos_flags = 0;
+  p_flow.qos_unused = 0;
   p_flow.service_type = BEST_EFFORT;
   p_flow.token_rate = 0x00000000;
   p_flow.peak_bandwidth = 0x00000000;
@@ -2058,7 +2058,7 @@ tBTM_STATUS BTM_SetQoS(const RawAddress& bd, FLOW_SPEC* p_flow,
     alarm_set_on_mloop(btm_cb.devcb.qos_setup_timer, BTM_DEV_REPLY_TIMEOUT_MS,
                        btm_qos_setup_timeout, NULL);
 
-    btsnd_hcic_qos_setup(p->hci_handle, p_flow->qos_flags, p_flow->service_type,
+    btsnd_hcic_qos_setup(p->hci_handle, p_flow->qos_unused, p_flow->service_type,
                          p_flow->token_rate, p_flow->peak_bandwidth,
                          p_flow->latency, p_flow->delay_variation);
     return (BTM_CMD_STARTED);
@@ -2081,7 +2081,7 @@ tBTM_STATUS BTM_FlowSpec(const RawAddress& bd, tBT_FLOW_SPEC* p_flow,
   if (p != NULL) {
     btm_cb.devcb.p_flow_spec_cmpl_cb = p_cb;
 
-    btsnd_hcic_flow_spec(p->hci_handle, p_flow->qos_flags, p_flow->flow_direction,
+    btsnd_hcic_flow_spec(p->hci_handle, p_flow->qos_unused, p_flow->flow_direction,
                          p_flow->service_type,
                          p_flow->token_rate, p_flow->token_bucket_size ,
                          p_flow->peak_bandwidth, p_flow->latency);
@@ -2133,7 +2133,7 @@ void btm_qos_setup_complete(uint8_t status, uint16_t handle,
     qossu.status = status;
     qossu.handle = handle;
     if (p_flow != NULL) {
-      qossu.flow.qos_flags = p_flow->qos_flags;
+      qossu.flow.qos_unused = p_flow->qos_unused;
       qossu.flow.service_type = p_flow->service_type;
       qossu.flow.token_rate = p_flow->token_rate;
       qossu.flow.peak_bandwidth = p_flow->peak_bandwidth;
@@ -2170,7 +2170,7 @@ void btm_flow_spec_complete(uint8_t status, uint16_t handle,
     flow_su.status = status;
     flow_su.handle = handle;
     if (p_flow != NULL) {
-      flow_su.flow.qos_flags = p_flow->qos_flags;
+      flow_su.flow.qos_unused = p_flow->qos_unused;
       flow_su.flow.service_type = p_flow->service_type;
       flow_su.flow.flow_direction = p_flow->flow_direction;
       flow_su.flow.token_rate = p_flow->token_rate;
