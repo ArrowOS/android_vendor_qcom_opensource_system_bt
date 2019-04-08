@@ -77,6 +77,8 @@
 #include <hardware/vendor.h>
 #include "device/include/interop.h"
 #include "device/include/profile_config.h"
+#include "device/include/device_iot_config.h"
+#include "controller.h"
 
 #if (BTA_AR_INCLUDED == TRUE)
 #include "bta_ar_api.h"
@@ -417,7 +419,7 @@ uint8_t bta_av_rc_create(tBTA_AV_CB* p_cb, uint8_t role, uint8_t shdl,
   tAVRC_CONN_CB ccb;
   RawAddress bda = RawAddress::kAny;
   uint8_t status = BTA_AV_RC_ROLE_ACP;
-  tBTA_AV_SCB* p_scb;
+  tBTA_AV_SCB* p_scb = NULL;
   int i;
   uint8_t rc_handle;
   tBTA_AV_RCB* p_rcb;
@@ -426,6 +428,9 @@ uint8_t bta_av_rc_create(tBTA_AV_CB* p_cb, uint8_t role, uint8_t shdl,
     p_scb = p_cb->p_scb[shdl - 1];
     bda = p_scb->peer_addr;
     status = BTA_AV_RC_ROLE_INT;
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+    device_iot_config_addr_int_add_one(p_scb->peer_addr, IOT_CONF_KEY_AVRCP_CONN_COUNT);
+#endif
   } else {
     p_rcb = bta_av_get_rcb_by_shdl(shdl);
     if (p_rcb != NULL) {
@@ -443,8 +448,13 @@ uint8_t bta_av_rc_create(tBTA_AV_CB* p_cb, uint8_t role, uint8_t shdl,
   ccb.control = p_cb->features & (BTA_AV_FEAT_RCTG | BTA_AV_FEAT_RCCT |
                                   BTA_AV_FEAT_METADATA | AVRC_CT_PASSIVE);
 
-  if (AVRC_Open(&rc_handle, &ccb, bda) != AVRC_SUCCESS)
+  if (AVRC_Open(&rc_handle, &ccb, bda) != AVRC_SUCCESS) {
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+    if (p_scb != NULL)
+      device_iot_config_addr_int_add_one(p_scb->peer_addr, IOT_CONF_KEY_AVRCP_CONN_FAIL_COUNT);
+#endif
     return BTA_AV_RC_HANDLE_NONE;
+  }
 
   i = rc_handle;
   p_rcb = &p_cb->rcb[i];
@@ -1306,8 +1316,9 @@ void bta_av_stream_chg(tBTA_AV_SCB* p_scb, bool started) {
   uint8_t* p_streams;
   bool no_streams = false;
   tBTA_AV_SCB* p_scbi;
-  char splitEnabled[PROPERTY_VALUE_MAX] = {0};
-  osi_property_get("persist.vendor.btstack.enable.splita2dp", splitEnabled, "true");
+  bool bt_split_a2dp_enabled = controller_get_interface()->supports_spilt_a2dp();
+  BTIF_TRACE_DEBUG("split_a2dp_status = %d",bt_split_a2dp_enabled);
+
   started_msk = BTA_AV_HNDL_TO_MSK(p_scb->hdi);
   APPL_TRACE_DEBUG("bta_av_stream_chg started:%d started_msk:x%x chnl:x%x",
                    started, started_msk, p_scb->chnl);
@@ -1318,7 +1329,7 @@ void bta_av_stream_chg(tBTA_AV_SCB* p_scb, bool started) {
 
   if (started) {
     /* Let L2CAP know this channel is processed with high priority */
-    if (!strcmp(splitEnabled, "false")) {
+    if (bt_split_a2dp_enabled == false) {
       L2CA_SetAclPriority(p_scb->peer_addr, L2CAP_PRIORITY_HIGH);
     }
     (*p_streams) |= started_msk;
@@ -1350,7 +1361,7 @@ void bta_av_stream_chg(tBTA_AV_SCB* p_scb, bool started) {
                      bta_av_cb.video_streams);
     if (no_streams) {
       /* Let L2CAP know this channel is processed with low priority */
-      if (!strcmp(splitEnabled, "false"))
+      if (bt_split_a2dp_enabled == false)
         L2CA_SetAclPriority(p_scb->peer_addr, L2CAP_PRIORITY_NORMAL);
     }
   }
@@ -1903,6 +1914,39 @@ uint16_t bta_get_dut_avrcp_version() {
     return profile_version;
 }
 
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+static void bta_av_store_peer_rc_version() {
+  tBTA_AV_CB* p_cb = &bta_av_cb;
+  tSDP_DISC_REC* p_rec = NULL;
+  uint16_t peer_rc_version = 0; /*Assuming Default peer version as 1.3*/
+
+  if ((p_rec = SDP_FindServiceInDb(
+      p_cb->p_disc_db, UUID_SERVCLASS_AV_REMOTE_CONTROL, NULL)) != NULL) {
+    if ((SDP_FindAttributeInRec(p_rec, ATTR_ID_BT_PROFILE_DESC_LIST)) != NULL) {
+      /* get profile version (if failure, version parameter is not updated) */
+      SDP_FindProfileVersionInRec(p_rec, UUID_SERVCLASS_AV_REMOTE_CONTROL,
+                                 &peer_rc_version);
+    }
+    if (peer_rc_version != 0)
+      device_iot_config_addr_set_hex_if_greater(p_rec->remote_bd_addr,
+              IOT_CONF_KEY_AVRCP_CTRL_VERSION, peer_rc_version, IOT_CONF_BYTE_NUM_2);
+  }
+
+  peer_rc_version = 0;
+  if ((p_rec = SDP_FindServiceInDb(
+      p_cb->p_disc_db, UUID_SERVCLASS_AV_REM_CTRL_TARGET, NULL)) != NULL) {
+    if ((SDP_FindAttributeInRec(p_rec, ATTR_ID_BT_PROFILE_DESC_LIST)) != NULL) {
+      /* get profile version (if failure, version parameter is not updated) */
+      SDP_FindProfileVersionInRec(p_rec, UUID_SERVCLASS_AV_REMOTE_CONTROL,
+                                 &peer_rc_version);
+    }
+    if (peer_rc_version != 0)
+      device_iot_config_addr_set_hex_if_greater(p_rec->remote_bd_addr,
+              IOT_CONF_KEY_AVRCP_TG_VERSION, peer_rc_version, IOT_CONF_BYTE_NUM_2);
+  }
+}
+#endif
+
 /*******************************************************************************
  *
  * Function         bta_av_check_peer_features
@@ -2163,6 +2207,10 @@ void bta_av_rc_disc_done(UNUSED_ATTR tBTA_AV_DATA* p_data) {
     }
   }
 
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+  bta_av_store_peer_rc_version();
+#endif
+
   p_cb->disc = 0;
   osi_free_and_reset((void**)&p_cb->p_disc_db);
 
@@ -2206,8 +2254,13 @@ void bta_av_rc_disc_done(UNUSED_ATTR tBTA_AV_DATA* p_data) {
         bta_av_data.rc_open = rc_open;
         (*p_cb->p_cback)(BTA_AV_RC_OPEN_EVT, &bta_av_data);
       }
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+      if (peer_features != 0)
+        device_iot_config_addr_set_hex(p_scb->peer_addr,
+                IOT_CONF_KEY_AVRCP_FEATURES, peer_features, IOT_CONF_BYTE_NUM_2);
+#endif
     }
-  } else {
+  } else if(rc_handle < BTA_AV_NUM_RCB) {
     tBTA_AV_RC_FEAT rc_feat;
     p_cb->rcb[rc_handle].peer_features = peer_features;
     rc_feat.cover_art_psm = cover_art_psm;
@@ -2219,13 +2272,18 @@ void bta_av_rc_disc_done(UNUSED_ATTR tBTA_AV_DATA* p_data) {
        * we still need to send RC feature event. So we need to get BD
        * from Message
        */
-      rc_feat.peer_addr = p_cb->lcb[p_cb->rcb[rc_handle].lidx].addr;
+      rc_feat.peer_addr = p_cb->lcb[p_cb->rcb[rc_handle].lidx - 1].addr;
     } else {
       rc_feat.peer_addr = p_scb->peer_addr;
     }
     tBTA_AV bta_av_data;
     bta_av_data.rc_feat = rc_feat;
     (*p_cb->p_cback)(BTA_AV_RC_FEAT_EVT, &bta_av_data);
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+    if (peer_features != 0)
+      device_iot_config_addr_set_hex(rc_feat.peer_addr,
+              IOT_CONF_KEY_AVRCP_FEATURES, peer_features, IOT_CONF_BYTE_NUM_2);
+#endif
   }
 }
 
@@ -2431,6 +2489,9 @@ void bta_av_rc_closed(tBTA_AV_DATA* p_data) {
           if (p_scb->rc_handle == p_rcb->handle)
             p_scb->rc_handle = BTA_AV_RC_HANDLE_NONE;
           APPL_TRACE_DEBUG("shdl:%d, srch:%d", p_rcb->shdl, p_scb->rc_handle);
+        } else {
+          APPL_TRACE_DEBUG("%s: p_scb is NULL", __func__);
+          rc_close.peer_addr = p_msg->peer_addr;
         }
         p_rcb->shdl = 0;
       } else if (p_rcb->lidx == (BTA_AV_NUM_LINKS + 1)) {

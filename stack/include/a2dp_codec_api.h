@@ -39,6 +39,8 @@
 #include "audio_a2dp_hw/include/audio_a2dp_hw.h"
 #include "avdt_api.h"
 #include "osi/include/time.h"
+#include "bt_target.h"
+class tBT_A2DP_OFFLOAD;
 
 /**
  * Structure used to initialize the A2DP encoder with A2DP peer information
@@ -61,6 +63,11 @@ class A2dpCodecConfig {
           BTAV_A2DP_CODEC_PRIORITY_DEFAULT);
 
   virtual ~A2dpCodecConfig() = 0;
+
+// gets current OTA codec specific config to |p_a2dp_offload->codec_info|.
+// Returns true if the current codec config is valid and copied,
+// otherwise false.
+bool getCodecSpecificConfig(tBT_A2DP_OFFLOAD* p_a2dp_offload);
 
   // Gets the pre-defined codec index.
   btav_a2dp_codec_index_t codecIndex() const { return codec_index_; }
@@ -273,7 +280,7 @@ class A2dpCodecs {
   // Initializes all supported codecs.
   // Returns true if at least one Source codec and one Sink codec were
   // initialized, otherwise false.
-  bool init(bool isMulticastEnabled = false, bool isShoEnabled = false);
+  bool init(bool isMulticastEnabled = false);
 
   // Finds the Source codec that corresponds to the A2DP over-the-air
   // |p_codec_info| information.
@@ -498,6 +505,12 @@ typedef struct {
   void (*set_transmit_queue_length)(size_t transmit_queue_length);
 } tA2DP_ENCODER_INTERFACE;
 
+// Gets peer sink endpoint codec type.
+// |p_codec_info| contains information about the codec capabilities.
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+int A2DP_IotGetPeerSinkCodecType(const uint8_t* p_codec_info);
+#endif
+
 // Gets the A2DP codec type.
 // |p_codec_info| contains information about the codec capabilities.
 tA2DP_CODEC_TYPE A2DP_GetCodecType(const uint8_t* p_codec_info);
@@ -662,11 +675,16 @@ const char* A2DP_CodecIndexStr(btav_a2dp_codec_index_t codec_index);
 bool A2DP_InitCodecConfig(btav_a2dp_codec_index_t codec_index,
                           tAVDT_CFG* p_cfg);
 
-void A2DP_SetOffloadStatus(bool offload_status, char *offload_cap,
-                          bool scrambling_support, bool is44p1kFreq_support);
+void A2DP_SetOffloadStatus(bool offload_status, const char *offload_cap,
+                          bool scrambling_support, bool is44p1kFreq_support,
+                          std::vector<btav_a2dp_codec_config_t>&
+                                offload_enabled_codecs_config);
 bool A2DP_GetOffloadStatus();
 bool A2DP_IsScramblingSupported();
 bool A2DP_Is44p1kFreqSupported();
+bool A2DP_IsCodecEnabled(btav_a2dp_codec_index_t codec_index);
+bool A2DP_IsCodecEnabledInSoftware(btav_a2dp_codec_index_t codec_index);
+
 bool A2DP_IsCodecEnabledInOffload(btav_a2dp_codec_index_t codec_index);
 // Decodes and displays A2DP codec info when using |LOG_DEBUG|.
 // |p_codec_info| is a pointer to the codec_info to decode and display.

@@ -40,6 +40,8 @@
 #include "hcimsgs.h"
 #include "osi/include/osi.h"
 #include "osi/include/properties.h"
+#include "device/include/device_iot_config.h"
+#include <btcommon_interface_defs.h>
 
 #if (BTM_SCO_INCLUDED == TRUE)
 
@@ -57,7 +59,6 @@
 #define SCO_ST_PEND_ROLECHANGE 7
 #define SCO_ST_PEND_MODECHANGE 8
 
-static char value[PROPERTY_VALUE_MAX];
 /******************************************************************************/
 /*            L O C A L    F U N C T I O N     P R O T O T Y P E S            */
 /******************************************************************************/
@@ -182,11 +183,13 @@ static void btm_esco_conn_rsp(uint16_t sco_inx, uint8_t hci_status,
            (btm_cb.btm_sco_pkt_types_supported & BTM_SCO_EXCEPTION_PKTS_MASK));
     }
 
+     bt_soc_type_t soc_type = controller_get_interface()->get_soc_type();
+     BTM_TRACE_DEBUG("%s: soc_type: %d", __func__, soc_type);
+
     /* Use Enhanced Synchronous commands if supported */
     if (controller_get_interface()
             ->supports_enhanced_setup_synchronous_connection() &&
-        (osi_property_get("vendor.bluetooth.soc", value, "qcombtsoc")&&
-         (strcmp(value, "cherokee") == 0 || strcmp(value, "hastings") == 0))) {
+         (soc_type == BT_SOC_TYPE_CHEROKEE || soc_type == BT_SOC_TYPE_HASTINGS)) {
       /* Use the saved SCO routing */
       p_setup->input_data_path = p_setup->output_data_path =
           btm_cb.sco_cb.sco_route;
@@ -435,11 +438,13 @@ static tBTM_STATUS btm_send_connect_request(uint16_t acl_handle,
     uint16_t saved_packet_types = p_setup->packet_types;
     p_setup->packet_types = temp_packet_types;
 
+    bt_soc_type_t soc_type = controller_get_interface()->get_soc_type();
+    BTM_TRACE_DEBUG("%s: soc_type: %d", __func__, soc_type);
+
     /* Use Enhanced Synchronous commands if supported */
     if (controller_get_interface()
             ->supports_enhanced_setup_synchronous_connection() &&
-        (osi_property_get("vendor.bluetooth.soc", value, "qcombtsoc")&&
-         (strcmp(value, "cherokee") == 0 || strcmp(value, "hastings") == 0))) {
+        (soc_type == BT_SOC_TYPE_CHEROKEE || soc_type == BT_SOC_TYPE_HASTINGS)) {
       /* Use the saved SCO routing */
       p_setup->input_data_path = p_setup->output_data_path =
           btm_cb.sco_cb.sco_route;
@@ -845,6 +850,10 @@ void btm_sco_conn_req(const RawAddress& bda, DEV_CLASS dev_class,
   uint16_t xx;
   tBTM_ESCO_CONN_REQ_EVT_DATA evt_data;
 
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+    device_iot_config_addr_int_add_one(bda, IOT_CONF_KEY_HFP_SCO_CONN_COUNT);
+#endif
+
   for (xx = 0; xx < BTM_MAX_SCO_LINKS; xx++, p++) {
     /*
      * If the sco state is in the SCO_ST_CONNECTING state, we still need
@@ -982,8 +991,13 @@ void btm_sco_connected(uint8_t hci_status, const RawAddress* bda,
           if (p->state == SCO_ST_CONNECTING) {
             p->state = SCO_ST_UNUSED;
             (*p->p_disc_cb)(xx);
-          } else
+          } else {
             p->state = SCO_ST_LISTENING;
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+            if (bda)
+              device_iot_config_addr_int_add_one(*bda, IOT_CONF_KEY_HFP_SCO_CONN_FAIL_COUNT);
+#endif
+          }
         }
 
         return;
@@ -1533,6 +1547,10 @@ tBTM_STATUS BTM_ChangeEScoLinkParms(uint16_t sco_inx,
         (p_parms->packet_types & BTM_SCO_SUPPORTED_PKTS_MASK &
          btm_cb.btm_sco_pkt_types_supported);
 
+    bt_soc_type_t soc_type = controller_get_interface()->get_soc_type();
+    BTM_TRACE_DEBUG("%s: soc_type: %d", __func__, soc_type);
+
+
     /* OR in any exception packet types */
     temp_packet_types |=
         ((p_parms->packet_types & BTM_SCO_EXCEPTION_PKTS_MASK) |
@@ -1550,8 +1568,7 @@ tBTM_STATUS BTM_ChangeEScoLinkParms(uint16_t sco_inx,
     /* Use Enhanced Synchronous commands if supported */
     if (controller_get_interface()
             ->supports_enhanced_setup_synchronous_connection() &&
-         (osi_property_get("vendor.bluetooth.soc", value, "qcombtsoc") &&
-         (strcmp(value, "cherokee") == 0 || strcmp(value, "hastings") == 0))) {
+         (soc_type == BT_SOC_TYPE_CHEROKEE || soc_type == BT_SOC_TYPE_HASTINGS)) {
       /* Use the saved SCO routing */
       p_setup->input_data_path = p_setup->output_data_path =
           btm_cb.sco_cb.sco_route;

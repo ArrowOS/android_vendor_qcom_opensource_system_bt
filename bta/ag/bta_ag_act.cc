@@ -74,6 +74,7 @@
 #include "bta_ag_twsp_dev.h"
 #include "bta_ag_twsp.h"
 #endif
+#include "device/include/device_iot_config.h"
 
 /*****************************************************************************
  *  Constants
@@ -267,7 +268,7 @@ void bta_ag_start_open(tBTA_AG_SCB* p_scb, tBTA_AG_DATA* p_data) {
     /* Let the incoming connection goes through.                        */
     /* Issue collision for this scb for now.                            */
     /* We will decide what to do when we find incoming connetion later. */
-    bta_ag_collision_cback(0, BTA_ID_AG, 0, &p_scb->peer_addr);
+    bta_ag_collision_cback(0, BTA_ID_AG, 0, p_scb->peer_addr);
     return;
   }
 
@@ -307,6 +308,11 @@ void bta_ag_disc_int_res(tBTA_AG_SCB* p_scb, tBTA_AG_DATA* p_data) {
 
       /* send ourselves sdp ok event */
       event = BTA_AG_DISC_OK_EVT;
+
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+      device_iot_config_addr_set_hex_if_greater(p_scb->peer_addr,
+              IOT_CONF_KEY_HFP_VERSION, p_scb->peer_version, IOT_CONF_BYTE_NUM_2);
+#endif
     }
   }
 
@@ -355,6 +361,10 @@ void bta_ag_disc_acp_res(tBTA_AG_SCB* p_scb, tBTA_AG_DATA* p_data) {
       p_data->disc_result.status == SDP_DB_FULL) {
     /* get attributes */
     bta_ag_sdp_find_attr(p_scb, bta_ag_svc_mask[p_scb->conn_service]);
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+    device_iot_config_addr_set_hex_if_greater(p_scb->peer_addr,
+            IOT_CONF_KEY_HFP_VERSION, p_scb->peer_version, IOT_CONF_BYTE_NUM_2);
+#endif
   }
 
   /* free discovery db */
@@ -693,6 +703,10 @@ void bta_ag_rfc_acp_open(tBTA_AG_SCB* p_scb, tBTA_AG_DATA* p_data) {
          interop_database_add_addr(INTEROP_HFP_1_7_BLACKLIST,
                           &p_scb->peer_addr, 3);
       }
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+    device_iot_config_addr_set_hex_if_greater(p_scb->peer_addr,
+        IOT_CONF_KEY_HFP_VERSION, p_scb->peer_version, IOT_CONF_BYTE_NUM_2);
+#endif
   } else {
       //do service discovery to get features for HSP and also for HFP
       //if the peer version can't be fetched from the config file
@@ -1060,6 +1074,8 @@ void bta_ag_handle_collision(tBTA_AG_SCB* p_scb,
   APPL_TRACE_IMP("%s: sending RFCOMM fail event to btif for dev %s",
                   __func__, p_scb->peer_addr.ToString().c_str())
   bta_ag_cback_open(p_scb, NULL, BTA_AG_FAIL_RFCOMM);
+  APPL_TRACE_DEBUG("%s: clear peer_addr so that instance can be reused", __func__);
+  p_scb->peer_addr = RawAddress::kEmpty;
 
   /* reopen registered servers */
   /* Collision may be detected before or after we close servers. */

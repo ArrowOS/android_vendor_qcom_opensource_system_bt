@@ -85,6 +85,7 @@
 #if (BTA_AR_INCLUDED == TRUE)
 #include "bta_ar_api.h"
 #endif
+#include "device/include/device_iot_config.h"
 
 /*****************************************************************************
  *  Constants
@@ -847,8 +848,13 @@ static void bta_av_a2dp_sdp_cback(bool found, tA2DP_Service* p_service) {
   } else {
     p_msg->hdr.event =
         (found) ? BTA_AV_SDP_DISC_OK_EVT : BTA_AV_SDP_DISC_FAIL_EVT;
-    if (found && (p_service != NULL))
+    if (found && (p_service != NULL)) {
       p_scb->avdt_version = p_service->avdt_version;
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+      device_iot_config_addr_set_hex_if_greater(p_scb->peer_addr,
+              IOT_CONF_KEY_A2DP_VERSION, p_scb->avdt_version, IOT_CONF_BYTE_NUM_2);
+#endif
+    }
     else
       p_scb->avdt_version = 0x00;
   }
@@ -1421,10 +1427,19 @@ void bta_av_config_ind(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
     p_info->seid = p_data->str_msg.msg.config_ind.int_seid;
 
     /* Sep type of Peer will be oppsite role to our local sep */
-    if (local_sep == AVDT_TSEP_SRC)
+    if (local_sep == AVDT_TSEP_SRC) {
       p_info->tsep = AVDT_TSEP_SNK;
-    else if (local_sep == AVDT_TSEP_SNK)
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+      device_iot_config_addr_set_int(p_scb->peer_addr,
+          IOT_CONF_KEY_A2DP_ROLE, IOT_CONF_VAL_A2DP_ROLE_SINK);
+#endif
+    } else if (local_sep == AVDT_TSEP_SNK) {
       p_info->tsep = AVDT_TSEP_SRC;
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+      device_iot_config_addr_set_int(p_scb->peer_addr,
+          IOT_CONF_KEY_A2DP_ROLE, IOT_CONF_VAL_A2DP_ROLE_SOURCE);
+#endif
+    }
 
     p_scb->role |= BTA_AV_ROLE_AD_ACP;
     p_scb->cur_psc_mask = p_evt_cfg->psc_mask;
@@ -2358,12 +2373,6 @@ void bta_av_getcap_results(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
     if (uuid_int == UUID_SERVCLASS_AUDIO_SOURCE) {
       A2DP_AdjustCodec(cfg.codec_info);
     }
-#if (TWS_ENABLED == TRUE)
-    if (strcmp(A2DP_CodecName(cfg.codec_info), "aptX-TWS") == 0) {
-      cfg.psc_mask &= ~AVDT_PSC_DELAY_RPT;
-      APPL_TRACE_DEBUG("%s:resetting delay report flag for tws+ codec",__func__);
-    }
-#endif
     /* open the stream */
     AVDT_OpenReq(p_scb->seps[p_scb->sep_idx].av_handle, p_scb->peer_addr,
                  p_scb->sep_info[p_scb->sep_info_idx].seid, &cfg);

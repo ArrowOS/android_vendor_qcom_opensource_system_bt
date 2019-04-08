@@ -496,23 +496,26 @@ tBTA_AG_SCB* bta_ag_get_other_idle_scb(tBTA_AG_SCB* p_curr_scb) {
  ******************************************************************************/
 void bta_ag_collision_cback(UNUSED_ATTR tBTA_SYS_CONN_STATUS status, uint8_t id,
                             UNUSED_ATTR uint8_t app_id,
-                            const RawAddress* peer_addr) {
+                            const RawAddress& peer_addr) {
+  uint16_t handle;
+  tBTA_AG_SCB* p_scb;
+
   /* Check if we have opening scb for the peer device. */
-  uint16_t handle = bta_ag_idx_by_bdaddr(peer_addr);
-  tBTA_AG_SCB* p_scb = bta_ag_scb_by_idx(handle);
+  handle = bta_ag_idx_by_bdaddr(&peer_addr);
+  p_scb = bta_ag_scb_by_idx(handle);
 
   if (p_scb && (p_scb->state == BTA_AG_OPENING_ST)) {
     if (id == BTA_ID_SYS) /* ACL collision */
     {
       LOG(WARNING) << __func__ << " AG found collision (ACL) for handle "
-                   << unsigned(handle) << " device " << *peer_addr;
+                   << unsigned(handle) << " device " << peer_addr;
     } else if (id == BTA_ID_AG) /* RFCOMM collision */
     {
       LOG(WARNING) << __func__ << " AG found collision (RFCOMM) for handle "
-                   << unsigned(handle) << " device " << *peer_addr;
+                   << unsigned(handle) << " device " << peer_addr;
     } else {
       LOG(WARNING) << __func__ << " AG found collision (UNKNOWN) for handle "
-                   << unsigned(handle) << " device " << *peer_addr;
+                   << unsigned(handle) << " device " << peer_addr;
     }
     bta_ag_sm_execute(p_scb, BTA_AG_COLLISION_EVT, NULL);
   }

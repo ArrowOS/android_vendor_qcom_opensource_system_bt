@@ -508,7 +508,7 @@ typedef struct {
 #define BTA_AV_ROLE_SUSPEND_OPT 0x40 /* Suspend on Start option is set */
 
 /* union of all event datatypes */
-typedef union {
+union tBTA_AV_DATA {
   BT_HDR hdr;
   tBTA_AV_API_ENABLE api_enable;
   tBTA_AV_API_REG api_reg;
@@ -537,7 +537,7 @@ typedef union {
   tBTA_AV_TWS_SET_EARBUD_ROLE tws_set_earbud_role;
   tBTA_AV_SET_TWS_DEVICE tws_set_device;
 #endif
-} tBTA_AV_DATA;
+};
 
 typedef union {
   tBTA_AV_API_OPEN open; /* used only before open and role switch
@@ -575,7 +575,7 @@ typedef union {
   0x04 /* SetConfig indication has been called by remote */
 
 /* type for AV stream control block */
-typedef struct {
+struct tBTA_AV_SCB {
   const tBTA_AV_ACT* p_act_tbl; /* the action table for stream state machine */
   const tBTA_AV_CO_FUNCTS* p_cos; /* the associated callout functions */
   bool sdp_discovery_started; /* variable to determine whether SDP is started */
@@ -645,7 +645,7 @@ typedef struct {
   uint8_t channel_mode; //L:0 R:1 S:2 M:3
   bool offload_started;
 //#endif
-} tBTA_AV_SCB;
+};
 
 #define BTA_AV_RC_ROLE_MASK 0x10
 #define BTA_AV_RC_ROLE_INT 0x00
@@ -737,6 +737,22 @@ typedef struct {
   uint8_t codec_info[AVDT_CODEC_SIZE];
   tBTA_AV_SCB* p_scb;
 }tBT_VENDOR_A2DP_OFFLOAD;
+
+// A2DP offload VSC parameters
+class tBT_A2DP_OFFLOAD {
+ public:
+  uint32_t codec_type;            /* codec types ex: SBC/AAC/LDAC/APTx */
+  uint16_t max_latency;           /* maximum latency */
+  uint16_t scms_t_enable;         /* content protection enable */
+  uint32_t sample_rate;           /* Sample rates ex: 44.1/48/88.2/96 Khz */
+  uint8_t bits_per_sample;        /* bits per sample ex: 16/24/32 */
+  uint8_t ch_mode;                /* None:0 Left:1 Right:2 */
+  uint32_t encoded_audio_bitrate; /* encoder audio bitrates */
+  uint16_t acl_hdl;               /* connection handle */
+  uint16_t l2c_rcid;              /* l2cap channel id */
+  uint16_t mtu;                   /* MTU size */
+  uint8_t codec_info[32];         /* Codec specific information */
+};
 
 extern tBT_VENDOR_A2DP_OFFLOAD offload_start;
 

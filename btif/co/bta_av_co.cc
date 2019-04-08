@@ -78,6 +78,7 @@
 #include "btif/include/btif_storage.h"
 #include <hardware/bt_gatt.h>
 #include "btif/include/btif_a2dp_source.h"
+#include "device/include/device_iot_config.h"
 
 #define MAX_2MBPS_AVDTP_MTU 663
 extern const btgatt_interface_t* btif_gatt_get_interface();
@@ -299,6 +300,10 @@ static tBTA_AV_CO_PEER* bta_av_co_get_active_peer(void) {
   return &bta_av_co_cb.peers[i];
 }
 
+bool bta_av_co_is_active_peer () {
+  return (bta_av_co_get_active_peer() != NULL);
+}
+
 bool bta_av_co_set_active_peer(const RawAddress& peer_address) {
   bool status = false;
   for (size_t i = 0; i < BTA_AV_CO_NUM_ELEMENTS(bta_av_co_cb.peers); i++) {
@@ -502,6 +507,23 @@ static tA2DP_STATUS bta_av_audio_sink_getconfig(
   }
   return result;
 }
+
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+static void bta_av_co_store_peer_codectype(const tBTA_AV_CO_PEER* p_peer)
+{
+  int index, peer_codec_type = 0;
+  const tBTA_AV_CO_SINK* p_sink;
+  APPL_TRACE_DEBUG("%s", __func__);
+  for (index = 0; index < p_peer->num_sup_sinks; index++) {
+    p_sink = &p_peer->sinks[index];
+    peer_codec_type |= A2DP_IotGetPeerSinkCodecType(p_sink->codec_caps);
+  }
+
+  device_iot_config_addr_set_hex(p_peer->addr,
+          IOT_CONF_KEY_A2DP_CODECTYPE, peer_codec_type, IOT_CONF_BYTE_NUM_1);
+}
+#endif
+
 /*******************************************************************************
  **
  ** Function         bta_av_co_audio_getconfig
@@ -572,6 +594,9 @@ tA2DP_STATUS bta_av_co_audio_getconfig(tBTA_AV_HNDL hndl, uint8_t* p_codec_info,
     return A2DP_FAIL;
   }
   APPL_TRACE_DEBUG("%s: last sink reached", __func__);
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+  bta_av_co_store_peer_codectype(p_peer);
+#endif
 
   const tBTA_AV_CO_SINK* p_sink = bta_av_co_audio_set_codec(p_peer);
   if (p_sink == NULL) {
@@ -1320,7 +1345,6 @@ void bta_av_co_get_peer_params(tA2DP_ENCODER_INIT_PEER_PARAMS* p_peer_params) {
   uint16_t min_mtu = 0xFFFF;
   int index = btif_max_av_clients;
   const tBTA_AV_CO_PEER* p_peer;
-  char AAC_frame_ctrl_val[PROPERTY_VALUE_MAX] = {'\0'};
 
   APPL_TRACE_DEBUG("%s", __func__);
   CHECK(p_peer_params != nullptr);
@@ -1347,10 +1371,8 @@ void bta_av_co_get_peer_params(tA2DP_ENCODER_INIT_PEER_PARAMS* p_peer_params) {
                                __func__, MAX_2MBPS_AVDTP_MTU);
       min_mtu = MAX_2MBPS_AVDTP_MTU;
     }
-    bool is_AAC_frame_ctrl_stack_enable = false;
-    osi_property_get("persist.vendor.btstack.aac_frm_ctl.enabled", AAC_frame_ctrl_val, "false");
-    if (!strcmp(AAC_frame_ctrl_val, "true"))
-      is_AAC_frame_ctrl_stack_enable = true;
+    bool is_AAC_frame_ctrl_stack_enable = controller_get_interface()->supports_aac_frame_ctl();
+
     APPL_TRACE_DEBUG("%s: Stack AAC frame control enabled: %d", __func__, is_AAC_frame_ctrl_stack_enable);
     if (is_AAC_frame_ctrl_stack_enable && btif_av_is_peer_edr() &&
                                (btif_av_peer_supports_3mbps() == FALSE)) {
@@ -1795,10 +1817,11 @@ bool bta_av_co_is_44p1kFreq_enabled() {
 }
 
 void bta_av_co_init(
-    const std::vector<btav_a2dp_codec_config_t>& codec_priorities) {
+    const std::vector<btav_a2dp_codec_config_t>& codec_priorities,
+    std::vector<btav_a2dp_codec_config_t>& offload_enabled_codecs_config) {
   APPL_TRACE_DEBUG("%s", __func__);
   RawAddress bt_addr;
-  char value[PROPERTY_VALUE_MAX] = {'\0'};
+  const char *a2dp_ofload_cap = controller_get_interface()->get_a2dp_offload_cap();
   tBTA_AV_CO_PEER* p_peer;
   /* Protect access to bta_av_co_cb.codec_config */
   mutex_global_lock();
@@ -1815,14 +1838,14 @@ void bta_av_co_init(
   bool a2dp_offload = btif_av_is_split_a2dp_enabled();
   bool isScramblingSupported = bta_av_co_is_scrambling_enabled();
   bool is44p1kFreqSupported = bta_av_co_is_44p1kFreq_enabled();
-  osi_property_get("persist.vendor.btstack.a2dp_offload_cap", value, "false");
-  A2DP_SetOffloadStatus(a2dp_offload, value, isScramblingSupported, is44p1kFreqSupported);
+
+  A2DP_SetOffloadStatus(a2dp_offload, a2dp_ofload_cap, isScramblingSupported,
+                       is44p1kFreqSupported, offload_enabled_codecs_config);
+
 /* SPLITA2DP */
   bool isMcastSupported = btif_av_is_multicast_supported();
-  bool isShoSupported = (btif_max_av_clients > 1) ? true : false;
   if (a2dp_offload) {
     isMcastSupported = false;
-    isShoSupported = false;
   }
   for (size_t i = 0; i < BTA_AV_CO_NUM_ELEMENTS(bta_av_co_cb.peers); i++) {
     p_peer = &bta_av_co_cb.peers[i];
@@ -1830,7 +1853,7 @@ void bta_av_co_init(
       p_peer->codecs = new A2dpCodecs(codec_priorities);
 
     if (p_peer->codecs != nullptr)
-      p_peer->codecs->init(isMcastSupported, isShoSupported);
+      p_peer->codecs->init(isMcastSupported);
 
     p_peer->isIncoming = false;
   }
@@ -1852,10 +1875,8 @@ void bta_av_co_peer_init(
   tBTA_AV_CO_PEER* p_peer;
   bool a2dp_offload = btif_av_is_split_a2dp_enabled();
   bool isMcastSupported = btif_av_is_multicast_supported();
-  bool isShoSupported = (btif_max_av_clients > 1) ? true : false;
   if (a2dp_offload) {
     isMcastSupported = false;
-    isShoSupported = false;
   }
 
   p_peer = &bta_av_co_cb.peers[index];
@@ -1863,7 +1884,7 @@ void bta_av_co_peer_init(
     p_peer->codecs = new A2dpCodecs(codec_priorities);
 
   if (p_peer->codecs != nullptr)
-    p_peer->codecs->init(isMcastSupported, isShoSupported);
+    p_peer->codecs->init(isMcastSupported);
 
   p_peer->isIncoming = false;
 }

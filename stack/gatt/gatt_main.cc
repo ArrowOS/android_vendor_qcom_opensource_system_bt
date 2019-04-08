@@ -125,7 +125,8 @@ void gatt_init(void) {
   L2CA_RegisterFixedChannel(L2CAP_ATT_CID, &fixed_reg);
 
   /* Now, register with L2CAP for ATT PSM over BR/EDR */
-  if (!L2CA_Register(BT_PSM_ATT, (tL2CAP_APPL_INFO*)&dyn_info)) {
+  if (!L2CA_Register(BT_PSM_ATT, (tL2CAP_APPL_INFO*)&dyn_info,
+                     false /* enable_snoop */)) {
     LOG(ERROR) << "ATT Dynamic Registration failed";
   }
 
@@ -176,10 +177,17 @@ void gatt_free(void) {
     gatt_cb.tcb[i].sr_cmd.multi_rsp_q = NULL;
   }
 
-  gatt_cb.hdl_list_info->clear();
-  gatt_cb.hdl_list_info = nullptr;
-  gatt_cb.srv_list_info->clear();
-  gatt_cb.srv_list_info = nullptr;
+  if (gatt_cb.hdl_list_info != nullptr) {
+    gatt_cb.hdl_list_info->clear();
+    delete(gatt_cb.hdl_list_info);
+    gatt_cb.hdl_list_info = nullptr;
+  }
+
+  if (gatt_cb.srv_list_info != nullptr) {
+    gatt_cb.srv_list_info->clear();
+    delete(gatt_cb.srv_list_info);
+    gatt_cb.srv_list_info = nullptr;
+  }
 }
 
 /*******************************************************************************
@@ -411,6 +419,12 @@ bool gatt_act_connect(tGATT_REG* p_reg, const RawAddress& bd_addr,
 
   return true;
 }
+
+namespace connection_manager {
+void on_connection_timed_out(uint8_t app_id, const RawAddress& address) {
+  gatt_le_connect_cback(L2CAP_ATT_CID, address, false, 0xff, BT_TRANSPORT_LE);
+}
+}  // namespace connection_manager
 
 /** This callback function is called by L2CAP to indicate that the ATT fixed
  * channel for LE is connected (conn = true)/disconnected (conn = false).

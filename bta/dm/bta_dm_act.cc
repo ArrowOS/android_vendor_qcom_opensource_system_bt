@@ -57,6 +57,9 @@
 #include "stack/sdp/sdpint.h"
 #include <inttypes.h>
 #include "btif/include/btif_config.h"
+#include "device/include/device_iot_config.h"
+#include <btcommon_interface_defs.h>
+#include <controller.h>
 
 #if (GAP_INCLUDED == TRUE)
 #include "gap_api.h"
@@ -73,7 +76,7 @@ static void bta_dm_service_search_remname_cback(const RawAddress& bd_addr,
 
 static void bta_dm_rem_name_cback(const RawAddress& bd_addr,
                                         DEV_CLASS dc, BD_NAME bd_name);
-static void bta_dm_remname_cback(tBTM_REMOTE_DEV_NAME* p_remote_name);
+static void bta_dm_remname_cback(void* p);
 static void bta_dm_find_services(const RawAddress& bd_addr);
 static void bta_dm_discover_next_device(void);
 static void bta_dm_sdp_callback(uint16_t sdp_status);
@@ -95,7 +98,7 @@ static bool bta_dm_check_av(uint16_t event);
 static void bta_dm_bl_change_cback(tBTM_BL_EVENT_DATA* p_data);
 
 static void bta_dm_policy_cback(tBTA_SYS_CONN_STATUS status, uint8_t id,
-                                uint8_t app_id, const RawAddress* peer_addr);
+                                uint8_t app_id, const RawAddress& peer_addr);
 
 /* Extended Inquiry Response */
 #if (BTM_LOCAL_IO_CAPS != BTM_IO_CAP_NONE)
@@ -112,7 +115,7 @@ static void bta_dm_search_timer_cback(void* data);
 static void bta_dm_disable_conn_down_timer_cback(void* data);
 static void bta_dm_bond_retrail_cback(void* data);
 static void bta_dm_rm_cback(tBTA_SYS_CONN_STATUS status, uint8_t id,
-                            uint8_t app_id, const RawAddress* peer_addr);
+                            uint8_t app_id, const RawAddress& peer_addr);
 static void bta_dm_adjust_roles(bool delay_role_switch);
 static char* bta_dm_get_remname(void);
 static void bta_dm_bond_cancel_complete_cback(tBTM_STATUS result);
@@ -535,7 +538,7 @@ static void bta_dm_sys_hw_cback(tBTA_SYS_HW_EVT status) {
  *
  ******************************************************************************/
 void bta_dm_disable(UNUSED_ATTR tBTA_DM_MSG* p_data) {
-  int soc_type = get_soc_type();
+  bt_soc_type_t soc_type = controller_get_interface()->get_soc_type();
 
   /* Set l2cap idle timeout to 0 (so BTE immediately disconnects ACL link after
    * last channel is closed) */
@@ -558,16 +561,16 @@ void bta_dm_disable(UNUSED_ATTR tBTA_DM_MSG* p_data) {
   connection_manager::reset(false);
 
   /* Disable soc iot info report */
-  if ((soc_type == BT_SOC_SMD || soc_type == BT_SOC_CHEROKEE) &&
+  if ((soc_type == BT_SOC_TYPE_SMD || soc_type == BT_SOC_TYPE_CHEROKEE) &&
       is_iot_info_report_enabled()) {
     btm_enable_soc_iot_info_report(false);
   }
 
   /* Disable SOC Logging */
-  if (soc_type == BT_SOC_SMD) {
+  if (soc_type == BT_SOC_TYPE_SMD) {
     uint8_t param[5] = {0x10,0x02,0x00,0x00,0x01};
     BTM_VendorSpecificCommand(HCI_VS_HOST_LOG_OPCODE,5,param,NULL);
-  } else if (soc_type == BT_SOC_CHEROKEE || soc_type == BT_SOC_HASTINGS) {
+  } else if (soc_type == BT_SOC_TYPE_CHEROKEE || soc_type == BT_SOC_TYPE_HASTINGS) {
     uint8_t param[2] = {0x14, 0x00};
     BTM_VendorSpecificCommand(HCI_VS_HOST_LOG_OPCODE, 2, param, NULL);
   }
@@ -719,6 +722,23 @@ void bta_dm_bredr_startup(tBTA_DM_MSG *p_data) {
       }
     }
   }
+}
+
+/*******************************************************************************
+ *
+ * Function         bta_dm_reset_pairing_flag
+ *
+ * Description      Reset pairing flag
+ *
+ * Returns          void
+ *
+ ******************************************************************************/
+void bta_dm_reset_pairing_flag(tBTA_DM_MSG *p_data) {
+  tBTM_STATUS status;
+
+  APPL_TRACE_EVENT(" bta_dm_reset_pairing_flag ");
+  status = BTM_SecResetPairingFlag(p_data->pair_state.bd_addr);
+
 }
 
 /*******************************************************************************
@@ -1164,12 +1184,14 @@ void bta_dm_pin_reply(tBTA_DM_MSG* p_data) {
  *
  ******************************************************************************/
 static void bta_dm_policy_cback(tBTA_SYS_CONN_STATUS status, uint8_t id,
-                                uint8_t app_id, const RawAddress* peer_addr) {
+                                uint8_t app_id, const RawAddress& peer_addr) {
   tBTA_DM_PEER_DEVICE* p_dev = NULL;
   uint16_t policy = app_id;
   uint32_t mask = (uint32_t)(1 << id);
 
-  if (peer_addr) p_dev = bta_dm_find_peer_device(*peer_addr);
+  if (peer_addr != RawAddress::kEmpty) {
+    p_dev = bta_dm_find_peer_device(peer_addr);
+  }
 
   APPL_TRACE_DEBUG(" bta_dm_policy_cback cmd:%d, policy:0x%x", status, policy);
   switch (status) {
@@ -1676,6 +1698,15 @@ static void bta_dm_store_profiles_version() {
     MAP_MCE_VERSION_CONFIG_KEY,
   };
 
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+  const char* iot_profile_keys[] = {
+    IOT_CONF_KEY_A2DP_VERSION,
+    IOT_CONF_KEY_HFP_VERSION,
+    IOT_CONF_KEY_AVRCP_CTRL_VERSION,
+    IOT_CONF_KEY_AVRCP_TG_VERSION,
+  };
+#endif
+
   int profile_num = sizeof(servclass_uuids)/sizeof(servclass_uuids[0]);
 
   APPL_TRACE_DEBUG("%s", __func__);
@@ -1705,6 +1736,10 @@ static void bta_dm_store_profiles_version() {
         APPL_TRACE_WARNING("%s: Failed to store peer profile version for %s",
                            __func__, sdp_rec->remote_bd_addr.ToString().c_str());
       }
+#if (BT_IOT_LOGGING_ENABLED == TRUE)
+      device_iot_config_addr_set_hex(sdp_rec->remote_bd_addr,
+          iot_profile_keys[i], profile_version, IOT_CONF_BYTE_NUM_2);
+#endif
     }
 
     if (servclass_uuids[i] == UUID_SERVCLASS_AUDIO_SINK) {
@@ -2653,7 +2688,8 @@ static void bta_dm_service_search_remname_cback(const RawAddress& bd_addr,
  * Returns          void
  *
  ******************************************************************************/
-static void bta_dm_remname_cback(tBTM_REMOTE_DEV_NAME* p_remote_name) {
+static void bta_dm_remname_cback(void* p) {
+  tBTM_REMOTE_DEV_NAME* p_remote_name = (tBTM_REMOTE_DEV_NAME*)p;
   APPL_TRACE_DEBUG("bta_dm_remname_cback len = %d name=<%s>",
                    p_remote_name->length, p_remote_name->remote_bd_name);
 
@@ -3304,7 +3340,7 @@ static void bta_dm_vnd_info_report_cback (uint8_t evt_len, uint8_t *p_data) {
  * Returns
  *
  ******************************************************************************/
-static void bta_dm_rs_cback(UNUSED_ATTR tBTM_ROLE_SWITCH_CMPL* p1) {
+static void bta_dm_rs_cback(UNUSED_ATTR void* p1) {
   APPL_TRACE_WARNING("bta_dm_rs_cback:%d", bta_dm_cb.rs_event);
   if (bta_dm_cb.rs_event == BTA_DM_API_SEARCH_EVT) {
     bta_dm_cb.search_msg.rs_res =
@@ -3357,7 +3393,7 @@ static bool bta_dm_check_av(uint16_t event) {
         }
         /* else either already master or can not switch for some reasons */
         bta_dm_policy_cback(BTA_SYS_PLCY_CLR, 0, HCI_ENABLE_MASTER_SLAVE_SWITCH,
-                            &p_dev->peer_bdaddr);
+                            p_dev->peer_bdaddr);
         break;
       }
     }
@@ -3433,7 +3469,7 @@ void bta_dm_acl_change(tBTA_DM_MSG* p_data) {
           if (need_policy_change) {
             bta_dm_policy_cback(BTA_SYS_PLCY_CLR, 0,
                                 HCI_ENABLE_MASTER_SLAVE_SWITCH,
-                                &p_dev->peer_bdaddr);
+                                p_dev->peer_bdaddr);
           }
         } else {
           /* there's AV no activity on this link and role switch happened
@@ -3696,12 +3732,12 @@ static void bta_dm_disable_conn_down_timer_cback(UNUSED_ATTR void* data) {
  *
  ******************************************************************************/
 static void bta_dm_rm_cback(tBTA_SYS_CONN_STATUS status, uint8_t id,
-                            uint8_t app_id, const RawAddress* peer_addr) {
+                            uint8_t app_id, const RawAddress& peer_addr) {
   uint8_t j;
   tBTA_PREF_ROLES role;
   tBTA_DM_PEER_DEVICE* p_dev;
 
-  p_dev = bta_dm_find_peer_device(*peer_addr);
+  p_dev = bta_dm_find_peer_device(peer_addr);
   if (status == BTA_SYS_CONN_OPEN) {
     if (p_dev) {
       /* Do not set to connected if we are in the middle of unpairing. When AV
