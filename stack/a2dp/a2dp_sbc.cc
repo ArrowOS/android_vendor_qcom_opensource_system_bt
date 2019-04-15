@@ -37,7 +37,6 @@
 #include "embdrv/sbc/encoder/include/sbc_encoder.h"
 #include "osi/include/log.h"
 #include "osi/include/osi.h"
-#include "bt_vendor_av.h"
 #define A2DP_SBC_MAX_BITPOOL 53
 
 /* Max bitpool do not result in excess of the max bit rate */
@@ -1097,11 +1096,13 @@ bool A2dpCodecConfigSbc::init() {
   if (!isValid()) return false;
 
   if (A2DP_IsCodecEnabledInOffload(BTAV_A2DP_CODEC_INDEX_SOURCE_SBC)) {
-    LOG_ERROR(LOG_TAG, "%s: SBC enabled in HW mode", __func__);
+    LOG_DEBUG(LOG_TAG, "%s: SBC enabled in HW mode", __func__);
     return true;
   } else if(!A2DP_IsCodecEnabledInSoftware(BTAV_A2DP_CODEC_INDEX_SOURCE_SBC)) {
-    LOG_ERROR(LOG_TAG, "%s: SBC disabled in both SW and HW mode", __func__);
+    LOG_DEBUG(LOG_TAG, "%s: SBC disabled in both SW and HW mode", __func__);
     return false;
+  } else {
+    LOG_DEBUG(LOG_TAG, "%s: SBC enabled in SW mode", __func__);
   }
 
   // Load the encoder
@@ -1668,17 +1669,10 @@ fail:
          sizeof(ota_codec_peer_config_));
   return false;
 }
-#if (TWS_ENABLED == TRUE)
-A2dpCodecConfigSbcSink::A2dpCodecConfigSbcSink(
-    btav_a2dp_codec_priority_t codec_priority)
-    : A2dpCodecConfig((btav_a2dp_codec_index_t)BTAV_VENDOR_A2DP_CODEC_INDEX_SINK_SBC,
-                      "SBC(Sink)", codec_priority) {}
-#else
 A2dpCodecConfigSbcSink::A2dpCodecConfigSbcSink(
     btav_a2dp_codec_priority_t codec_priority)
     : A2dpCodecConfig(BTAV_A2DP_CODEC_INDEX_SINK_SBC, "SBC(Sink)",
                       codec_priority) {}
-#endif
 A2dpCodecConfigSbcSink::~A2dpCodecConfigSbcSink() {}
 
 bool A2dpCodecConfigSbcSink::init() {
