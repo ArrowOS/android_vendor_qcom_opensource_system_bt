@@ -68,6 +68,10 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <log/log.h>
 
 #include "bta/include/bta_ag_api.h"
+#if (SWB_ENABLED == TRUE)
+#include "bta_ag_swb.h"
+#include <hardware/vendor_hf.h>
+#endif
 #include "bta/include/utl.h"
 #include "bta_ag_api.h"
 #include "btif_common.h"
@@ -646,17 +650,21 @@ static void btif_hf_upstreams_evt(uint16_t event, char* p_param) {
       btif_hf_cb[idx].connected_bda = RawAddress::kAny;
       btif_hf_cb[idx].peer_feat = 0;
       clear_phone_state_multihf(idx);
-      //If the active device is disconnected, clear the active device
-      if (is_active_device(bd_addr)) {
-        bool is_twsp_dev = btif_is_tws_plus_device(&bd_addr);
-        /*Clear active device only if given tws+ is active*/
-        if (!is_twsp_dev || (is_twsp_dev && active_bda == bd_addr)) {
-            active_bda = RawAddress::kEmpty;
-            BTIF_TRACE_IMP("%s: Active device is disconnected, clear the active device %s",
-                __func__, active_bda.ToString().c_str());
-            BTA_AgSetActiveDevice(active_bda);
-        } else {
-            BTIF_TRACE_IMP("%s: non-active TWS+ device disconnected");
+      /* Not clear active device if HFP is conntected via another Rfcomm DLC connection
+         due to collision */
+      if (!((btif_max_hf_clients > 1) && (is_connected(&bd_addr)))) {
+        //If the active device is disconnected, clear the active device
+        if (is_active_device(bd_addr)) {
+          bool is_twsp_dev = btif_is_tws_plus_device(&bd_addr);
+          /*Clear active device only if given tws+ is active*/
+          if (!is_twsp_dev || (is_twsp_dev && active_bda == bd_addr)) {
+              active_bda = RawAddress::kEmpty;
+              BTIF_TRACE_IMP("%s: Active device is disconnected, clear the active device %s",
+                  __func__, active_bda.ToString().c_str());
+              BTA_AgSetActiveDevice(active_bda);
+          } else {
+              BTIF_TRACE_IMP("%s: non-active TWS+ device disconnected");
+          }
         }
       }
       /* If AG_OPEN was received but SLC was not setup in a specified time (10
@@ -804,6 +812,14 @@ static void btif_hf_upstreams_evt(uint16_t event, char* p_param) {
       }
       break;
 
+#if SWB_ENABLED
+    case BTA_AG_SWB_EVT:
+      BTIF_TRACE_DEBUG("%s: AG final selected SWB codec is 0x%02x 0=Q0 4=Q1 6=Q3 7=Q4",
+                       __func__, p_data->val.num);
+      btif_handle_vendor_hf_events(event, p_data->val.num, &btif_hf_cb[idx].connected_bda);
+      break;
+#endif
+
     /* Java needs to send OK/ERROR for these commands */
     case BTA_AG_AT_CHLD_EVT:
       HAL_HF_CBACK(bt_hf_callbacks, AtChldCallback,
@@ -861,6 +877,14 @@ static void btif_hf_upstreams_evt(uint16_t event, char* p_param) {
               (p_data->val.num == BTA_AG_CODEC_CVSD) ? BTHF_WBS_NO : BTHF_WBS_YES,
               &btif_hf_cb[idx].connected_bda);
       break;
+
+#if (SWB_ENABLED == TRUE)
+    case BTA_AG_AT_QCS_EVT:
+      BTIF_TRACE_DEBUG("%s: AG final selected SWB codec is 0x%02x 0=Q0 4=Q1 6=Q3 7=Q4",
+                       __func__, p_data->val.num);
+      btif_handle_vendor_hf_events(event, p_data->val.num, &btif_hf_cb[idx].connected_bda);
+      break;
+#endif
 
     case BTA_AG_AT_BIND_EVT:
       if (p_data->val.hdr.status == BTA_AG_SUCCESS) {
@@ -1849,7 +1873,8 @@ bt_status_t HeadsetInterface::PhoneStateChange(
         }
         break;
       case BTHF_CALL_STATE_DIALING:
-        if (!(num_active + num_held) && is_active_device(*bd_addr))
+        if (!(num_active + num_held) && is_active_device(*bd_addr) &&
+            (btif_hf_cb[idx].audio_state != BTHF_AUDIO_STATE_CONNECTED))
         {
           ag_res.audio_handle = control_block.handle;
 
@@ -1866,10 +1891,11 @@ bt_status_t HeadsetInterface::PhoneStateChange(
         res = BTA_AG_OUT_CALL_ORIG_RES;
         break;
       case BTHF_CALL_STATE_ALERTING:
-        /* if we went from idle->alert, force SCO setup here. dialing usually
-         * triggers it */
+        /* if we went from idle->alert, force SCO setup here if SCO is not connected already.
+         * Dialing usually triggers it */
         if ((control_block.call_setup_state == BTHF_CALL_STATE_IDLE) &&
-            !(num_active + num_held) && is_active_device(*bd_addr)) {
+            !(num_active + num_held) && is_active_device(*bd_addr) &&
+            (btif_hf_cb[idx].audio_state != BTHF_AUDIO_STATE_CONNECTED)) {
           ag_res.audio_handle = control_block.handle;
 
           BTIF_TRACE_DEBUG("%s: Moving the audio_state to CONNECTING for device %s",
