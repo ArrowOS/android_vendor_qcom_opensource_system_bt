@@ -59,6 +59,9 @@ constexpr uint16_t CONNECTION_INTERVAL_10MS_PARAM = 0x0008;
 constexpr uint16_t CONNECTION_INTERVAL_20MS_PARAM = 0x0010;
 
 void btif_storage_add_hearing_aid(const HearingDevice& dev_info);
+bool btif_storage_get_hearing_aid_prop(
+    const RawAddress& address, uint8_t* capabilities, uint64_t* hi_sync_id,
+    uint16_t* render_delay, uint16_t* preparation_delay, uint16_t* codecs);
 
 constexpr uint8_t CODEC_G722_16KHZ = 0x01;
 constexpr uint8_t CODEC_G722_24KHZ = 0x02;
@@ -214,6 +217,8 @@ class HearingAidImpl : public HearingAid {
  private:
   // Keep track of whether the Audio Service has resumed audio playback
   bool audio_running;
+  // For Testing: overwrite the MIN_CE_LEN during connection parameter updates
+  uint16_t overwrite_min_ce_len;
 
  public:
   virtual ~HearingAidImpl() = default;
@@ -221,6 +226,7 @@ class HearingAidImpl : public HearingAid {
   HearingAidImpl(bluetooth::hearing_aid::HearingAidCallbacks* callbacks,
                  Closure initCb)
       : audio_running(false),
+        overwrite_min_ce_len(0),
         gatt_if(0),
         seq_counter(0),
         current_volume(VOLUME_UNKNOWN),
@@ -237,6 +243,13 @@ class HearingAidImpl : public HearingAid {
     }
     VLOG(2) << __func__
             << ", default_data_interval_ms=" << default_data_interval_ms;
+
+    overwrite_min_ce_len = (uint16_t)osi_property_get_int32(
+        "persist.bluetooth.hearingaidmincelen", 0);
+    if (overwrite_min_ce_len) {
+      LOG(INFO) << __func__
+                << ": Overwrites MIN_CE_LEN=" << overwrite_min_ce_len;
+    }
 
     BTA_GATTC_AppRegister(
         hearingaid_gattc_callback,
@@ -272,6 +285,12 @@ class HearingAidImpl : public HearingAid {
                    << default_data_interval_ms;
         min_ce_len = MIN_CE_LEN_10MS_CI;
         connection_interval = CONNECTION_INTERVAL_10MS_PARAM;
+    }
+
+    if (overwrite_min_ce_len != 0) {
+      VLOG(2) << __func__ << ": min_ce_len=" << min_ce_len
+              << " is overwritten to " << overwrite_min_ce_len;
+      min_ce_len = overwrite_min_ce_len;
     }
 
     L2CA_UpdateBleConnParams(address, connection_interval, connection_interval,
@@ -314,7 +333,11 @@ class HearingAidImpl : public HearingAid {
 
     HearingDevice* hearingDevice = hearingDevices.FindByAddress(address);
     if (!hearingDevice) {
-      DVLOG(2) << "Skipping unknown device, address=" << address;
+      /* When Hearing Aid is quickly disabled and enabled in settings, this case
+       * might happen */
+      LOG(WARNING) << "Closing connection to non hearing-aid device, address="
+                   << address;
+      BTA_GATTC_Close(conn_id);
       return;
     }
 
@@ -579,16 +602,21 @@ class HearingAidImpl : public HearingAid {
     const std::vector<gatt::Service>* services = BTA_GATTC_GetServices(conn_id);
 
     const gatt::Service* service = nullptr;
-    for (const gatt::Service& tmp : *services) {
-      if (tmp.uuid == Uuid::From16Bit(UUID_SERVCLASS_GATT_SERVER)) {
-        LOG(INFO) << "Found UUID_SERVCLASS_GATT_SERVER, handle="
-                  << loghex(tmp.handle);
-        const gatt::Service* service_changed_service = &tmp;
-        find_server_changed_ccc_handle(conn_id, service_changed_service);
-      } else if (tmp.uuid == HEARING_AID_UUID) {
-        LOG(INFO) << "Found Hearing Aid service, handle=" << loghex(tmp.handle);
-        service = &tmp;
+    if (services) {
+      for (const gatt::Service& tmp : *services) {
+        if (tmp.uuid == Uuid::From16Bit(UUID_SERVCLASS_GATT_SERVER)) {
+          LOG(INFO) << "Found UUID_SERVCLASS_GATT_SERVER, handle="
+                    << loghex(tmp.handle);
+          const gatt::Service* service_changed_service = &tmp;
+          find_server_changed_ccc_handle(conn_id, service_changed_service);
+        } else if (tmp.uuid == HEARING_AID_UUID) {
+          LOG(INFO) << "Found Hearing Aid service, handle=" << loghex(tmp.handle);
+          service = &tmp;
+        }
       }
+    } else {
+      LOG(ERROR) << "no services found for conn_id: " << conn_id;
+      return;
     }
 
     if (!service) {
@@ -600,11 +628,16 @@ class HearingAidImpl : public HearingAid {
 
     for (const gatt::Characteristic& charac : service->characteristics) {
       if (charac.uuid == READ_ONLY_PROPERTIES_UUID) {
-        DVLOG(2) << "Reading read only properties "
-                 << loghex(charac.value_handle);
-        BtaGattQueue::ReadCharacteristic(
-            conn_id, charac.value_handle,
-            HearingAidImpl::OnReadOnlyPropertiesReadStatic, nullptr);
+        if (!btif_storage_get_hearing_aid_prop(
+                hearingDevice->address, &hearingDevice->capabilities,
+                &hearingDevice->hi_sync_id, &hearingDevice->render_delay,
+                &hearingDevice->preparation_delay, &hearingDevice->codecs)) {
+          VLOG(2) << "Reading read only properties "
+                  << loghex(charac.value_handle);
+          BtaGattQueue::ReadCharacteristic(
+              conn_id, charac.value_handle,
+              HearingAidImpl::OnReadOnlyPropertiesReadStatic, nullptr);
+        }
       } else if (charac.uuid == AUDIO_CONTROL_POINT_UUID) {
         hearingDevice->audio_control_point_handle = charac.value_handle;
         // store audio control point!
@@ -1138,9 +1171,13 @@ class HearingAidImpl : public HearingAid {
       // TODO: instead of a magic number, we need to figure out the correct
       // buffer size
       encoded_data_left.resize(4000);
-      int encoded_size =
+      int encoded_size = 0;
+      if (chan_left.size() > 0) {
           g722_encode(encoder_state_left, encoded_data_left.data(),
                       (const int16_t*)chan_left.data(), chan_left.size());
+      } else {
+        LOG(ERROR) << "Error: No chan_left data to encode";
+      }
       encoded_data_left.resize(encoded_size);
 
       uint16_t cid = GAP_ConnGetL2CAPCid(left->gap_handle);
@@ -1162,9 +1199,13 @@ class HearingAidImpl : public HearingAid {
       // TODO: instead of a magic number, we need to figure out the correct
       // buffer size
       encoded_data_right.resize(4000);
-      int encoded_size =
+      int encoded_size = 0;
+      if (chan_right.size() > 0) {
           g722_encode(encoder_state_right, encoded_data_right.data(),
                       (const int16_t*)chan_right.data(), chan_right.size());
+      } else {
+        LOG(ERROR) << "Error: No chan_right data to encode";
+      }
       encoded_data_right.resize(encoded_size);
 
       uint16_t cid = GAP_ConnGetL2CAPCid(right->gap_handle);
