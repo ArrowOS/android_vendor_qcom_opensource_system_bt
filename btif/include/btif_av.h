@@ -39,8 +39,9 @@
 #define SOFT_HANDOFF 1
 #define RECONFIG_A2DP_PARAM 2
 
-#define APTX_HQ_LATENCY 200
-#define APTX_LL_LATENCY 70
+#define APTX_HQ_LATENCY 2000
+#define APTX_LL_LATENCY 700
+#define APTX_ULL_LATENCY 700
 
 /*******************************************************************************
  *  Type definitions for callback functions
@@ -67,6 +68,7 @@ typedef enum {
   BTIF_AV_TRIGGER_HANDOFF_REQ_EVT,
   BTIF_AV_ENCODER_MODE_CHANGED_EVT,
   BTIF_AV_SINK_QUICK_HANDOFF_EVT,
+  BTIF_AV_PROCESS_HIDL_REQ_EVT,
 } btif_av_sm_event_t;
 
 /*******************************************************************************
