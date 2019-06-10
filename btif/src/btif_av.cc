@@ -1084,6 +1084,7 @@ static bool btif_av_state_idle_handler(btif_sm_event_t event, void* p_data, int 
 static bool btif_av_state_opening_handler(btif_sm_event_t event, void* p_data,
                                           int index) {
   RawAddress* bt_addr = nullptr;
+  A2dpCodecs* a2dp_codecs = nullptr;
   BTIF_TRACE_IMP("%s event:%s flags %x on index %x", __func__,
                    dump_av_sm_event_name((btif_av_sm_event_t)event),
                    btif_av_cb[index].flags, index);
@@ -1092,9 +1093,12 @@ static bool btif_av_state_opening_handler(btif_sm_event_t event, void* p_data,
     case BTIF_SM_ENTER_EVT:
       //When uncheck media audio from settings UI and try to connect from remote,
       //a2dp would fail. Then check the media audio from UI, then due to peer codec info
-      //null, so it will not go for A2dp connection. So reinit peer codecs unconditionally.
-      BTIF_TRACE_DEBUG("%s: initialize peer codecs, unconditionally.", __func__);
-      bta_av_co_peer_init(btif_av_cb[index].codec_priorities, index);
+      //null, so it will not go for A2dp connection. So reinit peer codecs if null.
+      a2dp_codecs = bta_av_get_peer_a2dp_codecs(btif_av_cb[index].peer_bda);
+      if (a2dp_codecs == nullptr) {
+        BTIF_TRACE_DEBUG("%s: initialize peer codecs for index %d ", __func__, index);
+        bta_av_co_peer_init(btif_av_cb[index].codec_priorities, index);
+      }
       /* inform the application that we are entering connecting state */
       if (bt_av_sink_callbacks != NULL)
         HAL_CBACK(bt_av_sink_callbacks, connection_state_cb,
@@ -1770,7 +1774,7 @@ static bool btif_av_state_opened_handler(btif_sm_event_t event, void* p_data,
     } break;
 
     case BTIF_AV_SOURCE_CONFIG_REQ_EVT: {
-      if (btif_av_cb[index].flags & BTIF_AV_FLAG_PENDING_START) {
+      if ((btif_av_cb[index].flags & BTIF_AV_FLAG_PENDING_START) && codec_cfg_change) {
         btif_av_cache_src_codec_config(BTIF_AV_SOURCE_CONFIG_REQ_EVT, p_data, index);
       } else {
         btif_av_cb[index].reconfig_event = 0;
@@ -1880,6 +1884,7 @@ static bool btif_av_state_opened_handler(btif_sm_event_t event, void* p_data,
         btif_a2dp_command_ack(A2DP_CTRL_ACK_FAILURE);
       }
       btif_av_cb[index].reconfig_pending = false;
+      bluetooth::audio::a2dp::update_session_params(SessionParamType::MTU);
     } break;
 
     case BTIF_AV_CONNECT_REQ_EVT: {
@@ -2122,7 +2127,7 @@ static bool btif_av_state_started_handler(btif_sm_event_t event, void* p_data,
     case BTIF_AV_SOURCE_CONFIG_REQ_EVT:
       btif_av_cb[index].reconfig_pending = true;
       btif_av_flow_spec_cmd(index, reconfig_a2dp_param_val);
-      if (btif_av_cb[index].flags & BTIF_AV_FLAG_LOCAL_SUSPEND_PENDING) {
+      if ((btif_av_cb[index].flags & BTIF_AV_FLAG_LOCAL_SUSPEND_PENDING) && codec_cfg_change) {
         btif_av_cache_src_codec_config(BTIF_AV_SOURCE_CONFIG_REQ_EVT, p_data, index);
       } else {
         btif_av_cb[index].reconfig_event = 0;
@@ -2659,13 +2664,13 @@ static void btif_av_handle_event(uint16_t event, char* p_param) {
             btif_av_cb[i].current_playing = FALSE;
         }
         BTIF_TRACE_IMP("Reset all Current Playing for Device -> Null");
-        if ((previous_active_index < btif_max_av_clients) &&
-            btif_a2dp_source_is_hal_v2_supported()) {
+        if (btif_a2dp_source_is_hal_v2_supported()) {
           if (!btif_a2dp_source_end_session(
             btif_av_get_addr_by_index(previous_active_index))) {
             BTIF_TRACE_IMP("Device -> Null, btif_a2dp_source_end_session failed");
           }
-          if (btif_av_get_latest_stream_device_idx() == previous_active_index) {
+          if (previous_active_index < btif_max_av_clients &&
+            btif_av_get_latest_stream_device_idx() == previous_active_index) {
             BTIF_TRACE_IMP("Send suspend to previous active streaming device & stop media alarm");
             btif_sm_dispatch(btif_av_cb[previous_active_index].sm_handle,
                              BTIF_AV_SUSPEND_STREAM_REQ_EVT, NULL);
@@ -3891,12 +3896,6 @@ void btif_av_trigger_dual_handoff(bool handoff, int current_active_index, int pr
 
   /*clear remote suspend flag unconditionally, which was set when one remote does suspend*/
   btif_av_clear_remote_suspend_flag();
-  if ((current_active_index != btif_max_av_clients) && (current_active_index != INVALID_INDEX)
-     && btif_av_cb[current_active_index].remote_started) {
-    if(current_active_index == btif_a2dp_source_last_remote_start_index())
-      btif_a2dp_source_cancel_remote_start();
-    btif_av_cb[current_active_index].remote_started = false;
-  }
 
   if (current_active_index == btif_max_av_clients) {
     BTIF_TRACE_ERROR("Handoff on invalid index");

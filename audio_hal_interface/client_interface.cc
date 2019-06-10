@@ -56,6 +56,8 @@ std::ostream& operator<<(std::ostream& os, const BluetoothAudioCtrlAck& ack) {
       return os << "FAILURE_DISCONNECTING";
     case BluetoothAudioCtrlAck::FAILURE:
       return os << "FAILURE";
+    case BluetoothAudioCtrlAck::FAILURE_LONG_WAIT:
+      return os << "FAILURE_LONG_WAIT";
     default:
       return os << "UNDEFINED " << static_cast<int8_t>(ack);
   }
@@ -290,12 +292,10 @@ int BluetoothAudioClientInterface::StartSession() {
     session_started_ = false;
     return -EINVAL;
   }
-  //TODO to enable it again
-  /*if (session_started_) {
+  if (session_started_) {
     LOG(ERROR) << __func__ << ": session started already";
     return -EBUSY;
-  }*/
-
+  }
   if(!stack_if_) {
     stack_if_ = new BluetoothAudioPortImpl(sink_, this);
   }
