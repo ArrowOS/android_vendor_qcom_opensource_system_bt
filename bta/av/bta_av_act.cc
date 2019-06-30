@@ -233,6 +233,8 @@ void bta_av_del_rc(tBTA_AV_RCB* p_rcb) {
       p_rcb->lidx = 0;
       p_rcb->is_browse_active = false;
     }
+    p_rcb->rc_opened = false;
+    p_rcb->peer_addr = RawAddress::kEmpty;
     /* else ACP && connected. do not clear the handle yet */
     AVRC_Close(rc_handle);
     if (rc_handle == bta_av_cb.rc_acp_handle)
@@ -677,6 +679,8 @@ void bta_av_rc_opened(tBTA_AV_CB* p_cb, tBTA_AV_DATA* p_data) {
   p_cb->rcb[i].shdl = shdl;
   p_cb->rcb[i].browse_open = true;
   rc_open.rc_handle = i;
+  p_cb->rcb[i].peer_addr = p_data->rc_conn_chg.peer_addr;
+  p_cb->rcb[i].rc_opened = true;
   APPL_TRACE_ERROR("bta_av_rc_opened rcb[%d] shdl:%d lidx:%d/%d", i, shdl,
                    p_cb->rcb[i].lidx, p_cb->lcb[BTA_AV_NUM_LINKS].lidx);
   p_cb->rcb[i].status |= BTA_AV_RC_CONN_MASK;
@@ -1451,6 +1455,11 @@ void bta_av_conn_chg(tBTA_AV_DATA* p_data) {
             p_lcb_rc->addr == p_data->conn_chg.peer_addr) {
           /* AVRCP is already connected.
            * need to update the association betwen SCB and RCB */
+          if (!p_cb->rcb[p_cb->rc_acp_handle].rc_opened) {
+            if (p_cb->rcb[p_cb->rc_acp_handle].peer_addr != p_lcb_rc->addr) {
+              APPL_TRACE_ERROR("%s:RC is not open, stale entry",__func__);
+            }
+          }
           p_lcb_rc->conn_msk = 0; /* indicate RC ONLY is not connected */
           p_lcb_rc->lidx = 0;
           p_scb->rc_handle = p_cb->rc_acp_handle;
@@ -2512,6 +2521,11 @@ void bta_av_rc_closed(tBTA_AV_DATA* p_data) {
         p_lcb->lidx = 0;
       }
       p_rcb->lidx = 0;
+      if (p_cb->disc && ((p_cb->disc & (~BTA_AV_CHNL_MSK)) == p_rcb->handle)) {
+        APPL_TRACE_WARNING("%s: clear RC discovery in avrcp close disc: x%x",
+                   __func__, p_cb->disc );
+        p_cb->disc = 0;
+      }
 
       if ((p_rcb->status & BTA_AV_RC_ROLE_MASK) == BTA_AV_RC_ROLE_INT) {
         /* AVCT CCB is deallocated */

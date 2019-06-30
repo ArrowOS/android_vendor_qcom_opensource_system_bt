@@ -754,7 +754,7 @@ void BTA_AvUpdateEncoderMode(uint16_t enc_mode);
  * Returns            void
  *
  ******************************************************************************/
-void BTA_AvUpdateAptxData(uint16_t data);
+void BTA_AvUpdateAptxData(uint32_t data);
 
 
 /*******************************************************************************
@@ -939,4 +939,5 @@ void bta_av_sniff_enable(bool policy_enable, const RawAddress& peer_addr);
 bool bta_av_get_is_peer_state_incoming(const RawAddress& bd_addr);
 void bta_av_refresh_accept_signalling_timer(const RawAddress &remote_bdaddr);
 tBTA_AV_SCB* bta_av_addr_to_scb(const RawAddress& bd_addr);
+void bta_av_fake_suspend_rsp(const RawAddress &remote_bdaddr);
 #endif /* BTA_AV_API_H */
