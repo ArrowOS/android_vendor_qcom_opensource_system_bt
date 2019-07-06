@@ -54,6 +54,7 @@
 #include "btif_bat.h"
 #include "btif_hf.h"
 #include "btif_av.h"
+#include "bta_sys.h"
 using system_bt_osi::BluetoothMetricsLogger;
 using system_bt_osi::A2dpSessionMetrics;
 
@@ -156,6 +157,8 @@ extern bool btif_av_current_device_is_tws();
 extern bool btif_av_is_tws_device_playing(int index);
 extern bool btif_av_is_idx_tws_device(int index);
 extern int btif_av_get_tws_pair_idx(int index);
+extern void btif_av_clear_pending_start_flag();
+extern bool btif_av_is_tws_suspend_triggered(int index);
 
 static char a2dp_hal_imp[PROPERTY_VALUE_MAX] = "false";
 UNUSED_ATTR static const char* dump_media_event(uint16_t event) {
@@ -1612,9 +1615,23 @@ void btif_a2dp_update_sink_latency_change() {
   }
 }
 
+void btif_a2dp_source_command_ack(tA2DP_CTRL_CMD cmd, tA2DP_CTRL_ACK status) {
+  switch (cmd) {
+    case A2DP_CTRL_CMD_START:
+      bluetooth::audio::a2dp::ack_stream_started(status);
+      break;
+    case A2DP_CTRL_CMD_SUSPEND:
+    case A2DP_CTRL_CMD_STOP:
+      bluetooth::audio::a2dp::ack_stream_suspended(status);
+      break;
+    default:
+      break;
+  }
+}
+
 void btif_a2dp_source_process_request(tA2DP_CTRL_CMD cmd) {
   tA2DP_CTRL_ACK status = A2DP_CTRL_ACK_FAILURE;
-
+  bool start_audio = false;
   // update the pending command
   bluetooth::audio::a2dp::update_pending_command(cmd);
 
@@ -1630,6 +1647,12 @@ void btif_a2dp_source_process_request(tA2DP_CTRL_CMD cmd) {
       bool remote_start_flag = false;
       int remote_start_idx = btif_max_av_clients;
       int latest_playing_idx = btif_max_av_clients;
+
+      if (!bta_sys_is_register(BTA_ID_AV)) {
+        APPL_TRACE_ERROR("AV is disabled, return disc in progress");
+        status = A2DP_CTRL_ACK_DISCONNECT_IN_PROGRESS;
+        break;
+      }
       if (!bluetooth::headset::btif_hf_is_call_vr_idle()) {
         status = A2DP_CTRL_ACK_INCALL_FAILURE;
         break;
@@ -1717,6 +1740,7 @@ void btif_a2dp_source_process_request(tA2DP_CTRL_CMD cmd) {
               status = A2DP_CTRL_ACK_PENDING;
             } else {
               APPL_TRACE_DEBUG("Av stream already remote started in NS mode");
+              start_audio = true;
               status = A2DP_CTRL_ACK_SUCCESS;
               break;
             }
@@ -1757,6 +1781,11 @@ void btif_a2dp_source_process_request(tA2DP_CTRL_CMD cmd) {
 #endif
           break;
         }
+        if (btif_av_current_device_is_tws()) {
+          int index = btif_av_get_latest_stream_device_idx();
+          btif_dispatch_sm_event(BTIF_AV_REPORT_AUDIO_STATE_EVT,
+                                  (char *)&index, 1);
+        }
         btif_av_reset_reconfig_flag();
         status = A2DP_CTRL_ACK_SUCCESS;
         break;
@@ -1788,6 +1817,12 @@ void btif_a2dp_source_process_request(tA2DP_CTRL_CMD cmd) {
     }
 
     case A2DP_CTRL_CMD_STOP: {
+
+      if (!bta_sys_is_register(BTA_ID_AV)) {
+        APPL_TRACE_ERROR("AV is disabled, return disc in progress");
+        status = A2DP_CTRL_ACK_DISCONNECT_IN_PROGRESS;
+        break;
+      }
       if (btif_ba_is_active())
       {
         ba_send_message(BTIF_BA_AUDIO_STOP_REQ_EVT, 0, NULL, false);
@@ -1811,6 +1846,12 @@ void btif_a2dp_source_process_request(tA2DP_CTRL_CMD cmd) {
       break;
     }
     case A2DP_CTRL_CMD_SUSPEND: {
+
+      if (!bta_sys_is_register(BTA_ID_AV)) {
+        APPL_TRACE_ERROR("AV is disabled, return disc in progress");
+        status = A2DP_CTRL_ACK_DISCONNECT_IN_PROGRESS;
+        break;
+      }
       /* Local suspend */
       if (btif_ba_is_active()) {
         ba_send_message(BTIF_BA_AUDIO_PAUSE_REQ_EVT, 0, NULL, false);
@@ -1834,7 +1875,8 @@ void btif_a2dp_source_process_request(tA2DP_CTRL_CMD cmd) {
       }else if (btif_av_current_device_is_tws()) {
         //Check if either of the index is streaming
         for (int i = 0; i < btif_max_av_clients; i++) {
-          if (btif_av_is_tws_device_playing(i)) {
+          if (btif_av_is_tws_device_playing(i) &&
+            !btif_av_is_tws_suspend_triggered(i)) {
             APPL_TRACE_DEBUG("Suspend TWS+ stream on index %d",i);
             btif_dispatch_sm_event(BTIF_AV_SUSPEND_STREAM_REQ_EVT, NULL, 0);
             status = A2DP_CTRL_ACK_PENDING;
@@ -1846,6 +1888,8 @@ void btif_a2dp_source_process_request(tA2DP_CTRL_CMD cmd) {
           break;
         }
       }
+      /*Need to check if start is triggered and it is not in started state*/
+      btif_av_clear_pending_start_flag();
       /*pls check if we need to add a condition here */
       /* If we are not in started state, just ack back ok and let
        * audioflinger close the channel. This can happen if we are
@@ -1865,6 +1909,9 @@ void btif_a2dp_source_process_request(tA2DP_CTRL_CMD cmd) {
   switch (cmd) {
     case A2DP_CTRL_CMD_START:
       bluetooth::audio::a2dp::ack_stream_started(status);
+      if (start_audio) {
+        btif_a2dp_source_start_audio_req();
+      }
       break;
     case A2DP_CTRL_CMD_SUSPEND:
     case A2DP_CTRL_CMD_STOP:

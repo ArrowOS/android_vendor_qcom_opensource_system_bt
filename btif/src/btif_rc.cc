@@ -118,7 +118,8 @@
 #define IDX_GET_TOTAL_NUM_OF_ITEMS_RSP 14
 #define IDX_SEARCH_RSP 15
 #define IDX_ADD_TO_NOW_PLAYING_RSP 16
-#define BTRC_FEAT_AVRC_UI_UPDATE 0x08
+
+#define BTRC_FEAT_AVRC_UI_UPDATE 0x10
 
 /* Update MAX value whenever IDX will be changed */
 #define MAX_CMD_QUEUE_LEN 17
@@ -468,6 +469,7 @@ extern bool btif_hf_is_call_vr_idle();
 extern bool check_cod(const RawAddress* remote_bdaddr, uint32_t cod);
 extern bool btif_av_is_split_a2dp_enabled();
 extern int btif_av_idx_by_bdaddr(RawAddress *bd_addr);
+extern bool btif_av_is_peer_silenced(RawAddress *bd_addr);
 extern bool btif_av_check_flag_remote_suspend(int index);
 extern bt_status_t btif_hf_check_if_sco_connected();
 extern fixed_queue_t* btu_general_alarm_queue;
@@ -714,8 +716,12 @@ void handle_rc_features(btif_rc_device_cb_t* p_dev) {
     rc_features = (btrc_remote_features_t)(rc_features | BTRC_FEAT_METADATA);
   }
 
+  if (p_dev->rc_features & BTA_AV_FEAT_CA) {
+    rc_features = (btrc_remote_features_t)(rc_features | BTRC_FEAT_COVER_ART);
+  }
+
   if (p_dev->rc_features & BTA_AV_FEAT_AVRC_UI_UPDATE) {
-      rc_features = (btrc_remote_features_t)(rc_features | BTRC_FEAT_AVRC_UI_UPDATE);
+    rc_features = (btrc_remote_features_t)(rc_features | BTRC_FEAT_AVRC_UI_UPDATE);
   }
 
   BTIF_TRACE_DEBUG("%s: rc_features: 0x%x", __func__, rc_features);
@@ -3183,6 +3189,11 @@ static bt_status_t register_notification_rsp(
         break;
       case BTRC_EVT_PLAY_POS_CHANGED:
         avrc_rsp.reg_notif.param.play_pos = p_param->song_pos;
+        if (type == BTRC_NOTIFICATION_TYPE_CHANGED && btif_av_is_peer_silenced(bd_addr))
+        {
+          BTIF_TRACE_WARNING("%s: Device in silent mode disallow sending play pos change",__func__);
+          return BT_STATUS_UNHANDLED;
+        }
         break;
       case BTRC_EVT_AVAL_PLAYER_CHANGE:
         break;

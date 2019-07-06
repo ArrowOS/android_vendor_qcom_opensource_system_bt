@@ -123,6 +123,7 @@ extern bool btif_av_current_device_is_tws();
 extern bool btif_av_is_tws_device_playing(int index);
 extern bool btif_av_is_idx_tws_device(int index);
 extern int btif_av_get_tws_pair_idx(int index);
+extern bool btif_av_is_tws_suspend_triggered(int index);
 extern bool reconfig_a2dp;
 extern bool audio_start_awaited;
 extern bool tws_defaultmono_supported;
@@ -885,6 +886,9 @@ uint8_t btif_a2dp_audio_process_request(uint8_t cmd)
         break;
 
       default:
+        APPL_TRACE_IMP("%s: a2dp_cmd_pending=%s, a2dp_cmd_queued=%s",
+            __func__, audio_a2dp_hw_dump_ctrl_event((tA2DP_CTRL_CMD)a2dp_cmd_pending),
+            audio_a2dp_hw_dump_ctrl_event((tA2DP_CTRL_CMD)a2dp_cmd_queued));
         if (a2dp_cmd_pending != A2DP_CTRL_CMD_NONE)
         {
           status = A2DP_CTRL_ACK_PREVIOUS_COMMAND_PENDING;
@@ -902,6 +906,12 @@ uint8_t btif_a2dp_audio_process_request(uint8_t cmd)
         {
           a2dp_cmd_pending = cmd;
           status = btif_a2dp_audio_snd_ctrl_cmd(cmd);
+          if (a2dp_cmd_queued != A2DP_CTRL_CMD_NONE &&
+              (status == A2DP_CTRL_ACK_SUCCESS || status == A2DP_CTRL_ACK_PENDING)) {
+            APPL_TRACE_IMP("a2dp_cmd_queued is %s, set it to NONE",
+                audio_a2dp_hw_dump_ctrl_event((tA2DP_CTRL_CMD)a2dp_cmd_queued));
+            a2dp_cmd_queued = A2DP_CTRL_CMD_NONE;
+          }
         }
     }
   } else {
@@ -1161,7 +1171,8 @@ uint8_t btif_a2dp_audio_process_request(uint8_t cmd)
         }else if (btif_av_current_device_is_tws()) {
           //Check if either of the index is streaming
           for (int i = 0; i < btif_max_av_clients; i++) {
-            if (btif_av_is_tws_device_playing(i)) {
+            if (btif_av_is_tws_device_playing(i) &&
+              !btif_av_is_tws_suspend_triggered(i)) {
               APPL_TRACE_DEBUG("Suspend TWS+ stream on index %d",i);
               btif_dispatch_sm_event(BTIF_AV_SUSPEND_STREAM_REQ_EVT, NULL, 0);
               status = A2DP_CTRL_ACK_PENDING;
