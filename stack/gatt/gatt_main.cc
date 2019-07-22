@@ -859,6 +859,7 @@ static void gatt_send_conn_cback(tGATT_TCB* p_tcb) {
   tGATT_REG* p_reg;
   uint16_t conn_id;
 
+  VLOG(1) << __func__ << " : address " << p_tcb->peer_bda;
   std::set<tGATT_IF> apps =
       connection_manager::get_apps_connecting_to(p_tcb->peer_bda);
 
@@ -911,6 +912,9 @@ void gatt_data_process(tGATT_TCB& tcb, BT_HDR* p_buf) {
 
   uint16_t msg_len = p_buf->len - 1;
   STREAM_TO_UINT8(op_code, p);
+
+  LOG(INFO) << __func__ << " op_code = " << +op_code
+                        << ", msg_len = " << +msg_len;
 
   /* remove the two MSBs associated with sign write and write cmd */
   pseudo_op_code = op_code & (~GATT_WRITE_CMD_MASK);
