@@ -676,6 +676,7 @@ static void btif_report_source_codec_state(UNUSED_ATTR void* p_data,
       if(btif_a2dp_source_is_restart_session_needed()) {
         RawAddress bt_addr = btif_av_cb[index].peer_bda;
         btif_a2dp_source_restart_session(bt_addr, bt_addr);
+        codec_cfg_change = false;
         if (btif_av_cb[index].reconfig_pending) {
           BTIF_TRACE_DEBUG("%s:Set reconfig_a2dp true",__func__);
           reconfig_a2dp = true;
@@ -1536,8 +1537,8 @@ static bool btif_av_state_closing_handler(btif_sm_event_t event, void* p_data, i
              if (btif_av_cb[index].flags & BTIF_AV_FLAG_LOCAL_SUSPEND_PENDING) {
                  APPL_TRACE_DEBUG("%s: Not playing on other device: Stop media task as local suspend pending", __func__);
                  btif_a2dp_on_stopped(NULL);
-             } else {
-                APPL_TRACE_DEBUG("%s: Not playing on other device: Set Flush", __func__);
+             } else if (btif_av_cb[index].current_playing) {
+                APPL_TRACE_DEBUG("%s: Not playing on other device: Set Flush as active device", __func__);
                 btif_a2dp_source_set_tx_flush(true);
                 btif_a2dp_source_stop_audio_req();
              }
@@ -1644,9 +1645,7 @@ void btif_av_update_reconfigure_event(int index) {
 
   if (btif_av_is_split_a2dp_enabled() &&
       btif_av_cb[index].current_playing == TRUE) {
-    if ((codec_cfg_change && !btif_a2dp_source_is_hal_v2_supported()) ||
-        (btif_a2dp_source_is_hal_v2_supported() &&
-         btif_a2dp_source_is_restart_session_needed())) {
+    if (codec_cfg_change && !btif_a2dp_source_is_hal_v2_supported()) {
       codec_cfg_change = false;
       if (!isBitRateChange && !isBitsPerSampleChange)
         reconfig_a2dp = TRUE;
@@ -2006,9 +2005,9 @@ static bool btif_av_state_opened_handler(btif_sm_event_t event, void* p_data,
             ((btif_av_cb[index].flags & BTIF_AV_FLAG_LOCAL_SUSPEND_PENDING) == 0)) {
           /* fake handoff state to switch streaming to other codec device */
           btif_av_cb[index].dual_handoff = true;
-        } else if (!btif_av_is_playing() ||
-          (is_multicast_supported && btif_av_cb[index].current_playing)) {
-          APPL_TRACE_WARNING("%s: Suspend the AV Data channel", __func__);
+        } else if ((!btif_av_is_playing() || is_multicast_supported)
+                  && btif_av_cb[index].current_playing) {
+          APPL_TRACE_WARNING("%s: Suspend the AV Data channel for active device", __func__);
           /* ensure tx frames are immediately suspended */
           btif_a2dp_source_set_tx_flush(true);
           btif_a2dp_source_stop_audio_req();
@@ -2568,15 +2567,20 @@ static bool btif_av_state_started_handler(btif_sm_event_t event, void* p_data,
         BTIF_TRACE_DEBUG("%s: HAL suspend/stop pending ack the suspend", __func__);
         hal_suspend_pending = true;
       }
-      if ((p_av->suspend.status != BTA_AV_SUCCESS) ||
-          hal_suspend_pending ||
-          (!btif_av_is_playing_on_other_idx(index)) ||
-          (!btif_av_is_local_started_on_other_idx(index))) {
-          BTIF_TRACE_DEBUG("%s: Other device suspended/Remote started, ack the suspend",
-                                     __func__);
+
+      if ((p_av->suspend.status != BTA_AV_SUCCESS) || hal_suspend_pending) {
+        BTIF_TRACE_DEBUG("%s: Suspend failed or HAL pending ack, ack the suspend",__func__);
+        btif_a2dp_on_suspended(&p_av->suspend);
+      } else if (!btif_av_is_local_started_on_other_idx(index)) {
+        BTIF_TRACE_DEBUG("%s: Other device not locally started",__func__);
+        if (btif_av_check_flag_remote_suspend(index)){
+          BTIF_TRACE_DEBUG("%s: Remote suspended on index = %d, don't ack the suspend ", __func__, index);
+        } else{
+          BTIF_TRACE_DEBUG("%s: ack the suspend ", __func__);
           btif_a2dp_on_suspended(&p_av->suspend);
-      } else if(btif_av_is_playing_on_other_idx(index)) {
-        BTIF_TRACE_DEBUG("%s: Other device not suspended, don't ack the suspend", __func__);
+        }
+      } else {
+        BTIF_TRACE_DEBUG("%s: Other device locally started, don't ack the suspend", __func__);
       }
 
       BTIF_TRACE_DEBUG("%s: local suspend flag: %d, reconfig_event: %d", __func__,
@@ -4430,6 +4434,7 @@ static bt_status_t codec_config_src(const RawAddress& bd_addr,
 #endif
   btif_av_codec_config_req_t codec_req;
   isDevUiReq = false;
+  codec_cfg_change = false;
   for (auto cp : codec_preferences) {
     BTIF_TRACE_DEBUG(
         "%s: codec_type=%d codec_priority=%d "
@@ -4442,10 +4447,7 @@ static bt_status_t codec_config_src(const RawAddress& bd_addr,
         cp.codec_specific_2, cp.codec_specific_3, cp.codec_specific_4);
 
     A2dpCodecConfig* current_codec = bta_av_get_a2dp_current_codec();
-    if (index < btif_max_av_clients && btif_av_cb[index].reconfig_pending) {
-      BTIF_TRACE_ERROR("%s:Reconfig Pending, dishonor codec switch",__func__);
-      return BT_STATUS_FAIL;
-    }
+
     if (current_codec != nullptr) {
       btav_a2dp_codec_config_t codec_config;
       codec_config = current_codec->getCodecConfig();
@@ -4503,15 +4505,23 @@ static bt_status_t codec_config_src(const RawAddress& bd_addr,
           if ((cp.bits_per_sample != 0) && (codec_config.bits_per_sample != 0)) {
             reconfig_a2dp_param_id = BITSPERSAMPLE_PARAM_ID;
             isBitsPerSampleChange = true;
+          } else {
+            codec_cfg_change = true;
           }
+        } else {
+          codec_cfg_change = true;
         }
     }
 
-    if (cp.codec_specific_4 == 0 ||
-         cp.codec_type != BTAV_A2DP_CODEC_INDEX_SOURCE_APTX_ADAPTIVE)
-      codec_cfg_change = true;
-    else {
-      BTIF_TRACE_WARNING("%s: Dont set codec_cfg_change for Aptx mode change call", __func__);
+    if(cp.codec_specific_4 > 0 &&
+          cp.codec_type == BTAV_A2DP_CODEC_INDEX_SOURCE_APTX_ADAPTIVE) {
+          codec_cfg_change = false;
+      BTIF_TRACE_WARNING("%s: Reset codec_cfg_change for Aptx mode change call", __func__);
+    }
+
+    if (index < btif_max_av_clients && btif_av_cb[index].reconfig_pending && codec_cfg_change) {
+      BTIF_TRACE_ERROR("%s:Reconfig Pending, dishonor codec switch",__func__);
+      return BT_STATUS_FAIL;
     }
 
     isDevUiReq = true;
@@ -4707,19 +4717,16 @@ RawAddress btif_av_get_addr(RawAddress address) {
  *
  * Returns          void. Updates the peer_bda argument
  *******************************************************************************/
-void btif_av_get_peer_addr(RawAddress* peer_bda) {
-  btif_sm_state_t state = BTIF_AV_STATE_IDLE;
-  for (int i = 0; i < btif_max_av_clients; i++) {
-    state = btif_sm_get_state(btif_av_cb[i].sm_handle);
-    if ((state == BTIF_AV_STATE_OPENED) ||
-        (state == BTIF_AV_STATE_STARTED)) {
-      BTIF_TRACE_DEBUG("btif_av_get_peer_addr: %u state: %d ",
-              btif_av_cb[i].peer_bda, state);
-      *peer_bda = btif_av_cb[i].peer_bda;
-      if (state == BTIF_AV_STATE_STARTED)
-        break;
-    }
+void btif_av_get_active_peer_addr(RawAddress* peer_bda) {
+  // Find the peer that is currently Active.
+  tBTA_AV_CO_PEER* p_peer = nullptr;
+  p_peer = bta_av_co_get_active_peer();
+  if (p_peer == nullptr) {
+    APPL_TRACE_ERROR("%s: no active peer device found", __func__);
+    return;
   }
+  BTIF_TRACE_DEBUG("%s: active peer_add: %s ", __func__, p_peer->addr.ToString().c_str());
+  *peer_bda = p_peer->addr;
 }
 
 /*******************************************************************************
@@ -5813,7 +5820,9 @@ bool btif_av_is_multicast_supported() {
 }
 
 bool btif_av_check_flag_remote_suspend(int index) {
-  BTIF_TRACE_ERROR("%s(): index = %d",__func__,index);
+  BTIF_TRACE_ERROR("%s(): index = %d",__func__, index);
+  if (index >= btif_max_av_clients || index < 0)
+    return false;
   if (btif_av_cb[index].flags & BTIF_AV_FLAG_REMOTE_SUSPEND) {
     BTIF_TRACE_DEBUG("remote suspend flag set on index = %d",index);
     return true;
