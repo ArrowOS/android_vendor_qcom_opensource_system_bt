@@ -474,7 +474,6 @@ uint8_t bta_av_rc_create(tBTA_AV_CB* p_cb, uint8_t role, uint8_t shdl,
   //no need to over write rc hadle detail for duplicate handle
   if (p_rcb->handle != BTA_AV_RC_HANDLE_NONE) {
     APPL_TRACE_ERROR("bta_av_rc_create found duplicated handle:%d", rc_handle);
-    return BTA_AV_RC_HANDLE_NONE;
   }
 
   APPL_TRACE_WARNING("%s RC handle %d is connected", __func__, rc_handle);
@@ -1543,15 +1542,9 @@ void bta_av_conn_chg(tBTA_AV_DATA* p_data) {
       }
     }
 
-    if (p_cb->conn_audio == 0 && p_cb->conn_video == 0) {
-      APPL_TRACE_DEBUG("bta_av_conn_chg: signalling timer on index %d is %d",
-              BTA_AV_NUM_STRS-index-1,
-              alarm_is_scheduled(bta_av_cb.accept_signalling_timer[BTA_AV_NUM_STRS-index-1]));
-      if (!alarm_is_scheduled(bta_av_cb.accept_signalling_timer[BTA_AV_NUM_STRS-index-1])) {
-        /* if both channels are not connected, and signalling timer not running
-         * on other index, close all RC channels */
-        bta_av_close_all_rc(p_cb);
-      }
+    if (p_cb->conn_audio == 0 && p_cb->conn_video == 0 && (p_cb->conn_lcb & ~mask) == 0) {
+      APPL_TRACE_WARNING("No other AV connection up, close all RC");
+      bta_av_close_all_rc(p_cb);
     }
 
     /* if the AVRCP is no longer listening, create the listening channel */
@@ -1562,9 +1555,9 @@ void bta_av_conn_chg(tBTA_AV_DATA* p_data) {
 
   APPL_TRACE_DEBUG(
       "bta_av_conn_chg audio:%x video:%x up:%d conn_msk:0x%x chk_restore:%d "
-      "audio_open_cnt:%d",
+      "audio_open_cnt:%d p_cb->conn_lcb:0x%x mask:0x%x",
       p_cb->conn_audio, p_cb->conn_video, p_data->conn_chg.is_up, conn_msk,
-      chk_restore, p_cb->audio_open_cnt);
+      chk_restore, p_cb->audio_open_cnt, p_cb->conn_lcb, mask);
 
   if (chk_restore) {
     if (p_cb->audio_open_cnt == 1) {
@@ -1736,7 +1729,8 @@ void bta_av_sig_chg(tBTA_AV_DATA* p_data) {
           p_lcb = &p_cb->lcb[xx];
           p_lcb->lidx = xx + 1;
           /* start listening when the signal channel is open */
-          if (!bta_av_map_scb_rc(p_data->str_msg.bd_addr, p_cb->rcb)) {
+          if (p_cb->features & BTA_AV_FEAT_RCTG &&
+              !bta_av_map_scb_rc(p_data->str_msg.bd_addr, p_cb->rcb)) {
             if ((handle = bta_av_rc_create(p_cb, AVCT_ACP, 0, p_lcb->lidx)) != 0 &&
                  (handle != BTA_AV_RC_HANDLE_NONE)) {
               p_cb->p_scb[xx]->rc_ccb_alloc_handle = handle;
