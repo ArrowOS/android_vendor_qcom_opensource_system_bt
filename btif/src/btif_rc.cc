@@ -691,12 +691,13 @@ void handle_rc_features(btif_rc_device_cb_t* p_dev) {
 
   btrc_remote_features_t rc_features = BTRC_FEAT_NONE;
   RawAddress avdtp_addr = btif_av_get_addr(p_dev->rc_addr);
-
+  int ver = sdp_get_stored_avrc_tg_version(p_dev->rc_addr);
+  ver = (AVRCP_VERSION_BIT_MASK & ver);
   BTIF_TRACE_DEBUG("%s: AVDTP Address: %s AVCTP address: %s", __func__,
                    avdtp_addr.ToString().c_str(), rc_addr.ToString().c_str());
 
   if (interop_match_addr_or_name(INTEROP_DISABLE_ABSOLUTE_VOLUME, &rc_addr) ||
-      absolute_volume_disabled() || avdtp_addr != rc_addr) {
+      absolute_volume_disabled() || (avdtp_addr != rc_addr) || (ver < AVRC_REV_1_4)) {
     p_dev->rc_features &= ~BTA_AV_FEAT_ADV_CTRL;
   }
 
@@ -1890,7 +1891,6 @@ static uint8_t opcode_from_pdu(uint8_t pdu) {
     case AVRC_PDU_GET_FOLDER_ITEMS:
     case AVRC_PDU_CHANGE_PATH:
     case AVRC_PDU_GET_ITEM_ATTRIBUTES:
-    case AVRC_PDU_ADD_TO_NOW_PLAYING:
     case AVRC_PDU_SEARCH:
     case AVRC_PDU_GET_TOTAL_NUM_OF_ITEMS:
     case AVRC_PDU_GENERAL_REJECT:
