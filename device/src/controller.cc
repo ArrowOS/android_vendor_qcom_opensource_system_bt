@@ -146,8 +146,18 @@ static bool is_soc_logging_enabled() {
   return strncmp(btsnoop_enabled, "true", 4) == 0;
 }
 
+bool is_soc_lpa_enh_pwr_enabled() {
+  char lpa_enh_pwr_enabled[PROPERTY_VALUE_MAX] = {0};
+
+  osi_property_get("persist.vendor.btstack.enable.lpa", lpa_enh_pwr_enabled, "false");
+  return strncmp(lpa_enh_pwr_enabled, "true", 4) == 0;
+}
+
 static future_t* start_up(void) {
   BT_HDR* response;
+
+  //initialize number_of_scrambling_supported_freqs to 0 during start_up
+  number_of_scrambling_supported_freqs = 0;
 
   load_bt_configstore_lib();
   if (bt_configstore_intf != NULL) {
@@ -256,6 +266,10 @@ static future_t* start_up(void) {
         !strcmp(donglemode_prop, "false")) {
       btm_enable_soc_iot_info_report(is_iot_info_report_enabled());
     }
+  }
+
+  if (soc_type == BT_SOC_TYPE_HASTINGS && is_soc_lpa_enh_pwr_enabled()) {
+    btm_enable_link_lpa_enh_pwr_ctrl((uint16_t)HCI_INVALID_HANDLE, true);
   }
 
   // Read the local version info off the controller next, including

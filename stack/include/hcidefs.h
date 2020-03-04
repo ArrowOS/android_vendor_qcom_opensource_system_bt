@@ -421,6 +421,9 @@
 /* subopcode for enable/disable PL10 adaptive control */
 #define HCI_VS_ENABLE_HPA_CONTROL_FOR_CONN_HANDLE  0x04
 #define HCI_VS_DISABLE_HPA_CONTROL_FOR_CONN_HANDLE 0x05
+#define HCI_VS_ENABLE_LPA_CONTROL_FOR_CONN_HANDLE  0x14
+
+#define HCI_VS_ENABLE_LPA_CONTROL_RES_PARAM_LEN    4
 
 #define VS_QHCI_GET_SCRAMBLING_FREQS          0x11
 #define VS_QHCI_SCRAMBLE_A2DP_MEDIA           0x12
@@ -1333,6 +1336,8 @@ typedef struct {
 #define HCI_EXT_FEATURES_PAGE_MAX 3  // Parse feature pages 0-3
 
 #define HCI_FEATURE_BYTES_PER_PAGE 8
+
+#define HCI_EXT_FEATURES_SUCCESS_EVT_LEN 13
 
 #define HCI_FEATURES_KNOWN(x) \
   (((x)[0] | (x)[1] | (x)[2] | (x)[3] | (x)[4] | (x)[5] | (x)[6] | (x)[7]) != 0)

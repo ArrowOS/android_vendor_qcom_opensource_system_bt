@@ -1936,7 +1936,7 @@ static bool btif_av_state_opened_handler(btif_sm_event_t event, void* p_data,
                 BTIF_TRACE_DEBUG("%s: clear remote suspend flag on remote start",
                 __func__);
                 btif_av_cb[index].flags &= ~BTIF_AV_FLAG_REMOTE_SUSPEND;
-            } else {
+            } else if (p_av->start.status == BTA_AV_SUCCESS) {
               BTIF_TRACE_DEBUG("%s: honor remote start on index %d",__func__, index);
               /*avoiding same index timer running*/
               if(!btif_av_cb[index].remote_started) {
@@ -2154,9 +2154,15 @@ static bool btif_av_state_opened_handler(btif_sm_event_t event, void* p_data,
     } break;
 
     case BTA_AV_OFFLOAD_START_RSP_EVT:
-      APPL_TRACE_WARNING("Offload Start Rsp is unsupported in opened state, status = %d", p_av->status);
+      tBTA_AV_STATUS status;
+
+      if (!btif_a2dp_src_vsc.multi_vsc_support)
+        status = p_av->offload_rsp.status;
+      else
+        status = p_av->status;
+      APPL_TRACE_WARNING("Offload Start Rsp is unsupported in opened state, status = %d", status);
       if (btif_av_cb[index].flags & BTIF_AV_FLAG_REMOTE_SUSPEND) {
-        if (p_av->status == BTA_AV_SUCCESS) {
+        if (status == BTA_AV_SUCCESS) {
           btif_a2dp_src_vsc.tx_started = TRUE;
           bta_av_vendor_offload_stop(NULL);
         }
@@ -2300,7 +2306,11 @@ static bool btif_av_state_started_handler(btif_sm_event_t event, void* p_data,
             btif_report_audio_state(BTAV_AUDIO_STATE_STARTED, &(btif_av_cb[index].peer_bda));
           }
         } else {
-          btif_report_audio_state(BTAV_AUDIO_STATE_STARTED, &(btif_av_cb[index].peer_bda));
+          if (btif_av_cb[index].tws_device) {
+            BTIF_TRACE_DEBUG("%s:tws device, notify audio state after offload", __func__);
+          } else {
+            btif_report_audio_state(BTAV_AUDIO_STATE_STARTED, &(btif_av_cb[index].peer_bda));
+          }
         }
       }
       btif_av_cb[index].is_device_playing = true;
@@ -2791,8 +2801,16 @@ static bool btif_av_state_started_handler(btif_sm_event_t event, void* p_data,
       break;
 
     case BTA_AV_OFFLOAD_START_RSP_EVT:
-      btif_a2dp_on_offload_started(p_av->status);
+      tBTA_AV_STATUS status;
+      if (!btif_a2dp_src_vsc.multi_vsc_support)
+        status = p_av->offload_rsp.status;
+      else
+        status = p_av->status;
 
+      btif_a2dp_on_offload_started(status);
+      if (btif_av_cb[index].tws_device) {
+        btif_report_audio_state(BTAV_AUDIO_STATE_STARTED, &(btif_av_cb[index].peer_bda));
+      }
       if (btif_av_cb[index].reconfig_event) {
         btif_av_process_cached_src_codec_config(index);
       }
@@ -2986,6 +3004,7 @@ static void btif_av_handle_event(uint16_t event, char* p_param) {
       if (index == btif_max_av_clients) {
         //Device is disconnected before setting it as active device
         BTIF_TRACE_IMP("%s:Invalid index to set active device",__func__);
+        btif_av_signal_session_ready();
         break;
       }
 
@@ -3017,6 +3036,8 @@ static void btif_av_handle_event(uint16_t event, char* p_param) {
       if (btif_av_cb[index].current_playing == TRUE)
       {
         BTIF_TRACE_IMP("Trigger handoff for same device %d discard it", index);
+        if (btif_av_current_device_is_tws() && btif_av_cb[index].tws_device)
+          btif_av_signal_session_ready();
         break;
       }
 
@@ -3026,9 +3047,7 @@ static void btif_av_handle_event(uint16_t event, char* p_param) {
       if (btif_av_cb[index].tws_device &&
         btif_av_is_tws_device_playing(index)) {
         btif_av_cb[index].current_playing = TRUE;
-        //for(int i = 0; i< btif_max_av_clients; i++) {
-        //  if (i != index) btif_av_cb[i].current_playing = FALSE;
-        //}
+        btif_av_signal_session_ready();
         BTIF_TRACE_DEBUG("TWSP device, do not trigger handoff");
         return;
       }
@@ -3263,7 +3282,13 @@ static void btif_av_handle_event(uint16_t event, char* p_param) {
       break;
 
     case BTA_AV_OFFLOAD_START_RSP_EVT:
-      index = btif_av_get_latest_playing_device_idx();
+      if (!btif_a2dp_src_vsc.multi_vsc_support) {
+        BTIF_TRACE_DEBUG("%s:hndl  = %x",__func__, p_bta_data->offload_rsp.hndl);
+        index = HANDLE_TO_INDEX(p_bta_data->offload_rsp.hndl);
+      } else {
+        index = btif_av_get_latest_playing_device_idx();
+      }
+
       if (index == btif_max_av_clients) {
         for (int i = 0; i < btif_max_av_clients; i++) {
           if (btif_av_check_flag_remote_suspend(i)) {
@@ -3496,7 +3521,9 @@ int btif_av_get_latest_stream_device_idx() {
  ******************************************************************************/
 int btif_get_is_remote_started_idx() {
   int index = btif_a2dp_source_last_remote_start_index();
-  if ((index != -1) && !btif_av_cb[index].remote_started)
+  BTIF_TRACE_DEBUG("%s: last remote started index: %d", __func__, index);
+  if ((index == -1) ||
+      ((index != -1) && !btif_av_cb[index].remote_started))
     index = btif_max_av_clients;
   return index;
 }
@@ -3880,12 +3907,23 @@ void btif_av_event_deep_copy(uint16_t event, char* p_dest, char* p_src) {
     case BTA_AV_OFFLOAD_START_RSP_EVT: //22 /* fall through */
     case BTA_AV_OFFLOAD_STOP_RSP_EVT: //28
       {
-         tBTA_AV* av_src_offload_start_or_stop_rsp = (tBTA_AV*)p_src;
-         tBTA_AV* av_dest_offload_start_or_stop_rsp = (tBTA_AV*)p_dest;
-         BTIF_TRACE_DEBUG("%s: event: %d, size: %d", __func__, event, sizeof(uint8_t));
-         maybe_non_aligned_memcpy(av_dest_offload_start_or_stop_rsp,
-                                     av_src_offload_start_or_stop_rsp, sizeof(uint8_t));
-         break;
+         if (event == BTA_AV_OFFLOAD_START_RSP_EVT && !btif_a2dp_src_vsc.multi_vsc_support) {
+           tBTA_AV_OFFLOAD_RSP* av_src_offload_start_or_stop_rsp = (tBTA_AV_OFFLOAD_RSP*)p_src;
+           tBTA_AV_OFFLOAD_RSP* av_dest_offload_start_or_stop_rsp = (tBTA_AV_OFFLOAD_RSP*)p_dest;
+
+           BTIF_TRACE_DEBUG("%s: event: %d, size: %d", __func__, event,
+                                           sizeof(*av_src_offload_start_or_stop_rsp));
+           maybe_non_aligned_memcpy(av_dest_offload_start_or_stop_rsp,
+                   av_src_offload_start_or_stop_rsp, sizeof(*av_src_offload_start_or_stop_rsp));
+           break;
+         } else {
+           tBTA_AV* av_src_offload_start_or_stop_rsp = (tBTA_AV*)p_src;
+           tBTA_AV* av_dest_offload_start_or_stop_rsp = (tBTA_AV*)p_dest;
+           BTIF_TRACE_DEBUG("%s: event: %d, size: %d", __func__, event, sizeof(uint8_t));
+           maybe_non_aligned_memcpy(av_dest_offload_start_or_stop_rsp,
+                                       av_src_offload_start_or_stop_rsp, sizeof(uint8_t));
+           break;
+         }
       }
 
       case BTA_AV_RC_COLL_DETECTED_EVT: //26
@@ -4881,11 +4919,12 @@ bool btif_av_stream_ready(void) {
  ******************************************************************************/
 void  btif_av_clear_remote_start_timer(int index) {
   BTIF_TRACE_DEBUG("%s: index: %d", __func__, index);
-  if(index < btif_max_av_clients && index >= 0) {
-    btif_av_cb[index].remote_started = false;
-    if(btif_av_cb[index].remote_start_alarm != NULL)
+  if (index < btif_max_av_clients && index >= 0) {
+    if (btif_av_cb[index].remote_start_alarm != NULL &&
+             btif_av_cb[index].remote_started)
       alarm_free(btif_av_cb[index].remote_start_alarm);
-    btif_av_cb[index].remote_start_alarm = NULL;
+      btif_av_cb[index].remote_started = false;
+      btif_av_cb[index].remote_start_alarm = NULL;
   }
 }
 
@@ -6425,9 +6464,6 @@ void btif_initiate_sink_handoff(int idx, bool audio_state_changed) {
       BTIF_TRACE_DEBUG("%s, updating decoder on SHO through audio state change", __func__);
       uint8_t* a2dp_codec_config = bta_av_co_get_peer_codec_info(btif_av_cb[idx].bta_handle);
       if (a2dp_codec_config != NULL) {
-          /* Before create a new audiotrack, we need to stop and delete old audiotrack. */
-          btif_a2dp_sink_audio_handle_stop_decoding();
-          btif_a2dp_sink_clear_track_event();
           btif_a2dp_sink_update_decoder(a2dp_codec_config);
       } else {
           BTIF_TRACE_DEBUG("%s, a2dp_codec_config is NULL", __func__);
