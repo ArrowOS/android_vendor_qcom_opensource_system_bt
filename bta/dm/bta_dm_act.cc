@@ -188,6 +188,11 @@ static void bta_dm_ctrl_features_rd_cmpl_cback(tBTM_STATUS result);
 #define BTA_DM_SWITCH_DELAY_TIMER_MS 500
 #endif
 
+/* Discovery complete callback delay timer */
+#ifndef BTA_DM_DISC_CB_DELAY
+#define BTA_DM_DISC_CB_DELAY 100
+#endif
+
 #define BT_DEFAULT_POWER (0x80)
 
 #ifdef ADV_AUDIO_FEATURE
@@ -982,10 +987,10 @@ void bta_dm_remove_device(tBTA_DM_MSG* p_data) {
     APPL_TRACE_DEBUG("%s: ACL Up count  %d", __func__,
                      bta_dm_cb.device_list.count);
     continue_delete_dev = false;
-
+    int i = 0 ;
     /* Take the link down first, and mark the device for removal when
      * disconnected */
-    for (int i = 0; i < bta_dm_cb.device_list.count; i++) {
+    for (i = 0; i < bta_dm_cb.device_list.count; i++) {
       auto& peer_device = bta_dm_cb.device_list.peer_device[i];
       if (peer_device.peer_bdaddr == p_dev->bd_addr) {
         peer_device.conn_state = BTA_DM_UNPAIRING;
@@ -1006,6 +1011,18 @@ void bta_dm_remove_device(tBTA_DM_MSG* p_data) {
         break;
       }
     }
+   /*
+    The remote device is not in bta_dm_cb.device_list because remote extended
+    features complete event is not retured.   The reason may be remote device 
+    is in bad state and has no response.
+    For this case, ACL link shall be removed also.
+    */
+   if (i == bta_dm_cb.device_list.count){
+    if (BTM_IsAclConnectionUp(p_dev->bd_addr, BT_TRANSPORT_LE))
+      btm_remove_acl(p_dev->bd_addr, BT_TRANSPORT_LE);
+    if (BTM_IsAclConnectionUp(p_dev->bd_addr, BT_TRANSPORT_BR_EDR))
+      btm_remove_acl(p_dev->bd_addr, BT_TRANSPORT_BR_EDR);
+   }
   } else {
     continue_delete_dev = true;
   }
@@ -1621,6 +1638,12 @@ static void bta_dm_disable_search_and_disc(void) {
 
     bta_dm_di_cb.p_di_db = NULL;
     bta_dm_search_cb.p_search_cback(BTA_DM_DI_DISC_CMPL_EVT, NULL);
+  }
+
+  /* Cancel pending discovery callback alarm if active */
+  if (alarm_is_scheduled(bta_dm_search_cb.discovery_cb_alarm)) {
+    alarm_free(bta_dm_search_cb.discovery_cb_alarm);
+    bta_dm_search_cb.discovery_cb_alarm = NULL;
   }
 }
 
@@ -2355,6 +2378,25 @@ void bta_dm_search_cancel_transac_cmpl(UNUSED_ATTR tBTA_DM_MSG* p_data) {
 
 /*******************************************************************************
  *
+ * Function         bta_dm_disc_cmpl_cb_notify
+ *
+ * Description      Notify application that discovery is completed after timeout
+ *
+ * Returns          void
+ *
+ ******************************************************************************/
+void bta_dm_disc_cmpl_cb_notify(UNUSED_ATTR void* p_data) {
+  LOG_INFO(LOG_TAG, "%s", __func__);
+  bta_dm_search_cb.disc_cmpl_cb_pending = false;
+
+  if (bta_dm_search_cb.p_search_cback) {
+    bta_dm_search_cb.p_search_cback(BTA_DM_SEARCH_CANCEL_CMPL_EVT, NULL);
+  }
+  bta_dm_search_cb.discovery_cb_alarm = NULL;
+}
+
+/*******************************************************************************
+ *
  * Function         bta_dm_search_cancel_notify
  *
  * Description      Notify application that search has been cancelled
@@ -2363,11 +2405,19 @@ void bta_dm_search_cancel_transac_cmpl(UNUSED_ATTR tBTA_DM_MSG* p_data) {
  *
  ******************************************************************************/
 void bta_dm_search_cancel_notify(UNUSED_ATTR tBTA_DM_MSG* p_data) {
-  if (bta_dm_search_cb.p_search_cback) {
-    bta_dm_search_cb.p_search_cback(BTA_DM_SEARCH_CANCEL_CMPL_EVT, NULL);
-  }
   if (!bta_dm_search_cb.name_discover_done) {
     BTM_CancelRemoteDeviceName();
+  }
+
+  bool is_rnr_pending = BTM_IsRemNameReqPending();
+  if (!is_rnr_pending && bta_dm_search_cb.p_search_cback) {
+    bta_dm_search_cb.p_search_cback(BTA_DM_SEARCH_CANCEL_CMPL_EVT, NULL);
+  } else if (is_rnr_pending) {
+    bta_dm_search_cb.disc_cmpl_cb_pending = true;
+    bta_dm_search_cb.discovery_cb_alarm = alarm_new("discovery_cmpl_cb_alarm");
+    LOG_INFO(LOG_TAG, "%s RNR pending, delay discovery complete cb", __func__);
+    alarm_set_on_mloop(bta_dm_search_cb.discovery_cb_alarm, BTA_DM_DISC_CB_DELAY,
+                       bta_dm_disc_cmpl_cb_notify, NULL);
   }
   if (bta_dm_search_cb.gatt_disc_active) {
     bta_dm_cancel_gatt_discovery(bta_dm_search_cb.peer_bdaddr);
@@ -2778,6 +2828,19 @@ static void bta_dm_rem_name_cback (const RawAddress& bd_addr, DEV_CLASS dc, BD_N
   strlcpy((char*)sec_event.rem_name_evt.bd_name, (char*)bd_name, BD_NAME_LEN + 1);
   if(bta_dm_cb.p_sec_cback){
     bta_dm_cb.p_sec_cback(BTA_DM_REM_NAME_EVT, &sec_event);
+  }
+
+  /* If Discovery complete callback is pending to be given to upper layer when
+   * cancel remote name request is called on cancelling discovery then cancel
+   * the discovery_cb_alarm and give discovery complete callback to upper layer */
+  if (bta_dm_search_cb.disc_cmpl_cb_pending &&
+      bta_dm_search_cb.state == BTA_DM_SEARCH_IDLE) {
+    if (alarm_is_scheduled(bta_dm_search_cb.discovery_cb_alarm)) {
+      APPL_TRACE_DEBUG("%s: RNR completed, cancel discovery_cb_alarm", __func__);
+      alarm_free(bta_dm_search_cb.discovery_cb_alarm);
+      bta_dm_search_cb.discovery_cb_alarm = NULL;
+    }
+    bta_dm_disc_cmpl_cb_notify(NULL);
   }
 }
 
@@ -5698,8 +5761,8 @@ static void bta_dm_gattc_callback(tBTA_GATTC_EVT event, tBTA_GATTC* p_data) {
       if(p_data->close.conn_id == bta_dm_search_cb.conn_id)
           bta_dm_search_cb.conn_id = GATT_INVALID_CONN_ID;
 #ifdef ADV_AUDIO_FEATURE
-      if (is_remote_support_adv_audio(bta_dm_search_cb.peer_bdaddr)) {
-        bta_dm_reset_adv_audio_dev_info(bta_dm_search_cb.peer_bdaddr);
+      if (is_remote_support_adv_audio(p_data->close.remote_bda)) {
+        bta_dm_reset_adv_audio_dev_info(p_data->close.remote_bda);
       }
 #endif
       /* in case of disconnect before search is completed */

@@ -968,6 +968,20 @@ tBTM_STATUS BTM_ReadRemoteDeviceName(const RawAddress& remote_bda,
 
 /*******************************************************************************
  *
+ * Function         BTM_IsRemNameReqPending
+ *
+ * Description      This function returns if remote name request is pending.
+ *
+ * Returns          true, if remote name request is pending. Else, false.
+ *
+ ******************************************************************************/
+bool BTM_IsRemNameReqPending(void) {
+  tBTM_INQUIRY_VAR_ST* p_inq = &btm_cb.btm_inq_vars;
+  return p_inq->remname_active;
+}
+
+/*******************************************************************************
+ *
  * Function         BTM_CancelRemoteDeviceName
  *
  * Description      This function initiates the cancel request for the specified
@@ -1404,24 +1418,39 @@ tINQ_DB_ENT* btm_inq_db_find(const RawAddress& p_bda) {
  * Returns          pointer to entry
  *
  ******************************************************************************/
-tINQ_DB_ENT* btm_inq_db_new(const RawAddress& p_bda) {
+tINQ_DB_ENT* btm_inq_db_new(const RawAddress& p_bda, bool keep) {
   uint16_t xx;
   tINQ_DB_ENT* p_ent = btm_cb.btm_inq_vars.inq_db;
   tINQ_DB_ENT* p_old = btm_cb.btm_inq_vars.inq_db;
   uint32_t ot = 0xFFFFFFFF;
+  uint8_t keep_counter = 0;
 
   for (xx = 0; xx < BTM_INQ_DB_SIZE; xx++, p_ent++) {
     if (!p_ent->in_use) {
       memset(p_ent, 0, sizeof(tINQ_DB_ENT));
       p_ent->inq_info.results.remote_bd_addr = p_bda;
       p_ent->in_use = true;
+      /* The keep flag is set as true only for the first 4 HID devices */
+      if (keep_counter < BTM_INQ_DB_HID_KEEP_MAX)
+        p_ent->keep = keep;
+      else
+        p_ent->keep = false;
 
       return (p_ent);
     }
 
+    if (p_ent->keep) {
+      keep_counter++;
+    }
+
     if (p_ent->time_of_resp < ot) {
-      p_old = p_ent;
-      ot = p_ent->time_of_resp;
+      if (p_ent->keep) {
+        LOG(INFO) << __func__ << ": keep "
+                  << p_ent->inq_info.results.remote_bd_addr;
+      } else {
+        p_old = p_ent;
+        ot = p_ent->time_of_resp;
+      }
     }
   }
 
@@ -1430,6 +1459,11 @@ tINQ_DB_ENT* btm_inq_db_new(const RawAddress& p_bda) {
   memset(p_old, 0, sizeof(tINQ_DB_ENT));
   p_old->inq_info.results.remote_bd_addr = p_bda;
   p_old->in_use = true;
+  /* The keep flag is set as true only for the first 4 HID devices */
+  if (keep_counter < BTM_INQ_DB_HID_KEEP_MAX)
+    p_old->keep = keep;
+  else
+    p_old->keep = false;
 
   return (p_old);
 }
@@ -1791,7 +1825,13 @@ void btm_process_inq_results(uint8_t* p, uint8_t inq_res_mode) {
     /* If existing entry, use that, else get a new one (possibly reusing the
      * oldest) */
     if (p_i == NULL) {
-      p_i = btm_inq_db_new(bda);
+      if (((dc[1] & BTM_COD_MAJOR_CLASS_MASK) == BTM_COD_MAJOR_PERIPHERAL) &&
+          (inq_res_mode == BTM_INQ_RESULT_WITH_RSSI)) {
+        p_i = btm_inq_db_new(bda, true);
+      } else {
+        p_i = btm_inq_db_new(bda, false);
+      }
+
       is_new = true;
     }
 
@@ -2078,7 +2118,11 @@ tBTM_STATUS btm_initiate_rem_name(const RawAddress& remote_bda, uint8_t origin,
   /* Make sure there are no two remote name requests from external API in
      progress */
   else if (origin == BTM_RMT_NAME_EXT) {
-    if (p_inq->remname_active) {
+    if ((p_inq->remname_active) && (p_inq->remname_bda == remote_bda))  {
+      BTM_TRACE_DEBUG("Remote name request already in progress for this remote");
+      return BTM_CMD_STARTED;
+    } else if (p_inq->remname_active) {
+      BTM_TRACE_DEBUG("Different remote name request is started");
       return (BTM_BUSY);
     } else {
       /* If there is no remote name request running,call the callback function

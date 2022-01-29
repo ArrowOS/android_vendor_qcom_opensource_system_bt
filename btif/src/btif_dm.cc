@@ -727,7 +727,13 @@ void bond_state_changed(bt_status_t status, const RawAddress& bd_addr,
     pairing_cb.state = state;
     pairing_cb.bd_addr = bd_addr;
   } else {
-    pairing_cb = {};
+   if ((pairing_cb.state == BT_BOND_STATE_BONDING)
+     && (state == BT_BOND_STATE_NONE)
+     && (pairing_cb.bd_addr != bd_addr)) {
+     BTIF_TRACE_DEBUG("%s: Another pairing is in progress", __func__);
+    } else {
+      pairing_cb = {};
+    }
   }
   if (state == BT_BOND_STATE_NONE) {
     // Update Pbap 1.2 entry, set rebonded to true
@@ -1932,7 +1938,9 @@ static void btif_dm_search_services_evt(uint16_t event, char* p_param) {
       break;
 
     case BTA_DM_SEARCH_CANCEL_CMPL_EVT:
-      /* no-op */
+      BTIF_TRACE_DEBUG("%s: discovery is stopped", __func__);
+      HAL_CBACK(bt_hal_cbacks, discovery_state_changed_cb,
+                BT_DISCOVERY_STOPPED);
       break;
 
     case BTA_DM_DISC_BLE_RES_EVT: {
